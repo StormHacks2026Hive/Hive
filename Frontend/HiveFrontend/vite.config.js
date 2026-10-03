@@ -12,9 +12,12 @@ export default defineConfig({
   ],
   server: {
     proxy: {
+      '^/pool(?:/|$)': { target: backendUrl, ws: true },
+      '/shared': backendUrl,
       '/kernels': backendUrl,
       '/jobs': backendUrl,
       '^/node(?:/|$)': backendUrl,
+      '^/legacy-node(?:/|$)': backendUrl,
       '^/nodes$': { target: backendUrl, ws: true },
     },
   },

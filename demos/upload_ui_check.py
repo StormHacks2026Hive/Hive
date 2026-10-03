@@ -12,9 +12,10 @@ with sync_playwright() as p:
     page.on('pageerror', lambda error: errors.append(str(error)))
     gpu_nodes = [browser.new_page() for _ in range(2)]
     for node in gpu_nodes:
-        node.goto(base + '/node/')
+        node.goto(base + '/legacy-node/')
         node.wait_for_function("document.querySelector('#status').textContent === 'Connected · idle'", timeout=30000)
     page.goto(base)
+    page.get_by_role('button', name='Python kernel prototype').click()
     upload = page.locator('input[type=file]')
     upload.set_input_files({'name':'unsupported.py','mimeType':'text/x-python','buffer':b'import numpy as np\nz = 0j\nwhile True:\n    z += 1\n'})
     page.get_by_role('button', name='Analyze compatibility').click()

@@ -1,109 +1,101 @@
-const types = { f32: Float32Array, u32: Uint32Array, i32: Int32Array };
-export function encode(array) {
-  const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
-  let text = '';
-  for (let i = 0; i < bytes.length; i += 32768) text += String.fromCharCode(...bytes.subarray(i, i + 32768));
-  return btoa(text);
-}
-function decode(data, dtype) {
-  const text = atob(data);
-  const bytes = Uint8Array.from(text, c => c.charCodeAt(0));
-  return new types[dtype](bytes.buffer);
-}
-export class GPUWorker {
+// All device operations run inside a dedicated Web Worker.
+export class TileGPU {
   async init(onLost) {
-    if (!navigator.gpu) throw new Error('WebGPU is unavailable. Use a WebGPU-enabled browser on localhost or HTTPS.');
-    this.adapter = await navigator.gpu.requestAdapter();
+    if (!navigator.gpu) throw new Error('WebGPU unavailable in this browser. Use a supported browser on HTTPS or localhost.');
+    this.adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!this.adapter) throw new Error('No WebGPU adapter found.');
-    this.device = await this.adapter.requestDevice();
-    this.lost = false;
-    this.device.lost.then(info => { this.lost = true; onLost(info.message || 'GPU device lost'); });
-    const l = this.device.limits;
-    this.limits = {
-      max_buffer_size: l.maxBufferSize,
-      max_storage_buffer_binding_size: l.maxStorageBufferBindingSize,
-      max_compute_workgroup_size_x: l.maxComputeWorkgroupSizeX,
-      max_compute_invocations_per_workgroup: l.maxComputeInvocationsPerWorkgroup,
-      max_compute_workgroups_per_dimension: l.maxComputeWorkgroupsPerDimension,
-      bandwidth_mbps: 20,
+    const requested = {};
+    // Request relevant maximum capacities, not minimum-alignment limits.
+    for (const name of ['maxBufferSize', 'maxStorageBufferBindingSize', 'maxUniformBufferBindingSize',
+      'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupSizeY', 'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupsPerDimension']) {
+      requested[name] = this.adapter.limits[name];
+    }
+    const features = this.adapter.features.has('shader-f16') ? ['shader-f16'] : [];
+    this.device = await this.adapter.requestDevice({ requiredLimits: requested, requiredFeatures: features });
+    this.device.lost.then(info => onLost(info.message || 'GPU device lost'));
+    this.pipelines = new Map();
+    const info = this.adapter.info || {};
+    this.capabilities = {
+      webgpu: true,
+      adapter: Object.fromEntries(['vendor', 'architecture', 'description', 'device'].map(key => [key, String(info[key] || '').slice(0, 256)])),
+      limits: Object.fromEntries(Object.keys(requested).map(key => [key, this.device.limits[key]])),
+      features,
     };
   }
-  async run(chunk) {
-    if (this.lost) throw new Error('GPU device lost');
-    let timer;
-    try {
-      return await Promise.race([
-        this.compute(chunk),
-        new Promise((_, reject) => { timer = setTimeout(() => {
-          this.device.destroy();
-          reject(new Error('Per-chunk GPU timeout; device destroyed'));
-        }, chunk.timeout_ms); }),
-      ]);
-    } finally { clearTimeout(timer); }
-  }
-  async compute(chunk) {
-    const d = this.device, buffers = [];
+  async pipeline(shaderId) {
+    if (this.pipelines.has(shaderId)) return this.pipelines.get(shaderId);
+    const url = new URL(`/pool/assets/${shaderId}`, self.location.origin).href;
+    let response, cache;
+    // Cache failures are optional; private browsing/storage pressure must not block work.
+    try { cache = await caches.open('hive-shaders-v1'); response = await cache.match(url); } catch { /* use fetch */ }
+    if (!response) {
+      response = await fetch(url);
+      if (!response.ok) throw new Error('Shader download failed');
+      try { await cache?.put(url, response.clone()); } catch { /* cache is best effort */ }
+    }
+    const source = await response.text();
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+    const actual = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+    if (actual !== shaderId) throw new Error('Shader content hash mismatch');
+    const d = this.device;
     d.pushErrorScope('validation');
-    const make = (size, usage) => {
-      const b = d.createBuffer({ size, usage }); buffers.push(b); return b;
-    };
-    let scopePopped = false;
     try {
-      if (chunk.count < 1 || chunk.count > 2000000) throw new Error('Invalid chunk count');
-      const entries = [];
-      if (chunk.uniforms.length) {
-        const bytes = new ArrayBuffer(Math.max(16, Math.ceil(chunk.uniforms.length * 4 / 16) * 16));
-        const view = new DataView(bytes);
-        chunk.uniforms.forEach((u, i) => {
-          const value = chunk.parameters[u.name];
-          if (!Number.isFinite(value)) throw new Error('Invalid uniform');
-          view[{ f32: 'setFloat32', u32: 'setUint32', i32: 'setInt32' }[u.type]](i * 4, value, true);
-        });
-        const uniform = make(bytes.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-        d.queue.writeBuffer(uniform, 0, bytes);
-        entries.push({ binding: 0, resource: { buffer: uniform } });
-      }
-      let output, outputType;
-      for (const b of chunk.bindings) {
-        const buffer = make(chunk.count * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-        if (b.access === 'read') {
-          if (chunk.chunk_type !== 'data_slice' || !chunk.input || chunk.input.dtype !== b.element_type) throw new Error('Invalid input binding');
-          const input = decode(chunk.input.data, b.element_type);
-          if (input.length !== chunk.count) throw new Error('Invalid input length');
-          d.queue.writeBuffer(buffer, 0, input);
-        } else { output = buffer; outputType = b.element_type; }
-        entries.push({ binding: b.binding, resource: { buffer } });
-      }
-      const shader = d.createShaderModule({ code: chunk.wgsl });
-      const info = await shader.getCompilationInfo();
+      const module = d.createShaderModule({ code: source });
+      const info = await module.getCompilationInfo();
       const errors = info.messages.filter(m => m.type === 'error');
       if (errors.length) throw new Error(errors.map(m => `${m.lineNum}: ${m.message}`).join('\n'));
-      const pipeline = await d.createComputePipelineAsync({ layout: 'auto', compute: { module: shader, entryPoint: 'main' } });
-      const group = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries });
-      const readback = make(chunk.count * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+      const pipeline = await d.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+      this.pipelines.set(shaderId, pipeline);
+      return pipeline;
+    } finally {
+      const error = await d.popErrorScope();
+      if (error) throw new Error(error.message);
+    }
+  }
+  async render(chunk) {
+    const start = performance.now();
+    const pipeline = await this.pipeline(chunk.shader_id);
+    const d = this.device, buffers = [];
+    d.pushErrorScope('validation');
+    let popped = false;
+    try {
+      const make = (size, usage) => {
+        const buffer = d.createBuffer({ size, usage }); buffers.push(buffer); return buffer;
+      };
+      const t = chunk.tile, image = chunk.image, p = chunk.parameters;
+      const byteLength = t.width * t.height * 4;
+      const bytes = new ArrayBuffer(48), view = new DataView(bytes);
+      [t.x, t.y, t.width, t.height, image.width, image.height, p.max_iterations, 0].forEach((v, i) => view.setUint32(i * 4, v, true));
+      [p.xmin, p.xmax, p.ymin, p.ymax].forEach((v, i) => view.setFloat32(32 + i * 4, v, true));
+      const uniform = make(48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      const output = make(byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+      const readback = make(byteLength, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+      d.queue.writeBuffer(uniform, 0, bytes);
+      const bind = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: uniform } }, { binding: 1, resource: { buffer: output } },
+      ] });
       const encoder = d.createCommandEncoder();
       const pass = encoder.beginComputePass();
-      pass.setPipeline(pipeline); pass.setBindGroup(0, group);
-      pass.dispatchWorkgroups(Math.ceil(chunk.count / chunk.workgroup_size)); pass.end();
-      encoder.copyBufferToBuffer(output, 0, readback, 0, chunk.count * 4);
+      pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(Math.ceil(t.width / 8), Math.ceil(t.height / 8)); pass.end();
+      encoder.copyBufferToBuffer(output, 0, readback, 0, byteLength);
       d.queue.submit([encoder.finish()]);
-      const validation = await d.popErrorScope(); scopePopped = true;
+      const validation = await d.popErrorScope(); popped = true;
       if (validation) throw new Error(validation.message);
       await readback.mapAsync(GPUMapMode.READ);
-      const values = new types[outputType](readback.getMappedRange().slice(0)); readback.unmap();
-      if (values.some(v => !Number.isFinite(v))) throw new Error('Non-finite GPU output');
-      if (!chunk.reduce) return { output: { dtype: outputType, data: encode(values) } };
-      let value = chunk.reduce === 'min' ? Infinity : chunk.reduce === 'max' ? -Infinity : 0;
-      for (const v of values) {
-        if (chunk.reduce === 'min') value = Math.min(value, v);
-        else if (chunk.reduce === 'max') value = Math.max(value, v);
-        else if (chunk.reduce === 'count') value += v !== 0 ? 1 : 0;
-        else value += v; // mean sends sum and count, never an unweighted mean
-      }
-      return { summary: { value, count: values.length } };
+      const pixels = new Uint8Array(readback.getMappedRange().slice(0)); readback.unmap();
+      return { pixels, elapsed_ms: Math.max(.01, performance.now() - start) };
     } finally {
-      if (!scopePopped) await d.popErrorScope().catch(() => {});
+      if (!popped) await d.popErrorScope().catch(() => {});
       buffers.forEach(b => b.destroy());
     }
   }
+  async benchmark(shaderId) {
+    const chunk = { shader_id: shaderId, tile: { x: 192, y: 192, width: 64, height: 64 },
+      image: { width: 512, height: 512 }, parameters: { xmin: -2, xmax: 1, ymin: -1.5, ymax: 1.5, max_iterations: 256 } };
+    await this.render(chunk); // warm shader/pipeline before measuring
+    const result = await this.render(chunk);
+    return { version: 'mandelbrot-v1', pixels: 4096, elapsed_ms: result.elapsed_ms };
+  }
+  destroy() { this.device?.destroy(); }
 }

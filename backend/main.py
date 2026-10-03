@@ -16,6 +16,7 @@ from .compiler import compile_source, validate_job
 from .store import MemoryStore, Job
 from .scheduler import Scheduler
 from .converter import SourceRequest, CompatibilityReport, KernelValidation, analyze, validate_preview
+from .pool.routes import router as pool_router, pool
 
 store = MemoryStore()
 scheduler = Scheduler(store)
@@ -24,12 +25,17 @@ Incoming = TypeAdapter(Annotated[Union[Register, Heartbeat, ChunkResult, ChunkEr
 @asynccontextmanager
 async def lifespan(app):
     task = asyncio.create_task(scheduler.run())
+    pool_task = asyncio.create_task(pool.run())
     yield
     task.cancel()
+    pool_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+    with contextlib.suppress(asyncio.CancelledError):
+        await pool_task
 
 app = FastAPI(lifespan=lifespan)
+app.include_router(pool_router)
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_methods=['GET','POST'], allow_headers=['Content-Type'])
 
 @app.post('/kernels/analyze', response_model=CompatibilityReport)
@@ -123,3 +129,9 @@ async def nodes(socket: WebSocket):
             scheduler.disconnect(node.node_id)
 
 app.mount('/node', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'node-web', html=True), name='node')
+app.mount('/legacy-node', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'legacy-node-web', html=True), name='legacy-node')
+app.mount('/shared', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'shared'), name='shared')
+# Building the frontend before starting uvicorn enables a single-origin deployment.
+frontend_dist = Path(__file__).resolve().parents[1] / 'Frontend/HiveFrontend/dist'
+if frontend_dist.is_dir():
+    app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='submitter')

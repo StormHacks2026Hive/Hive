@@ -8,7 +8,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(channel='chrome', headless=True, args=['--enable-unsafe-webgpu'])
     pages = [browser.new_page() for _ in range(2)]
     for page in pages:
-        page.goto('http://localhost:8000/node/')
+        page.goto('http://localhost:8000/legacy-node/')
         page.wait_for_function("document.querySelector('#status').textContent === 'Connected · idle'", timeout=30000)
     for demo in ['demos.monte_carlo', 'demos.elementwise']:
         process = subprocess.Popen([sys.executable, '-m', demo], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)

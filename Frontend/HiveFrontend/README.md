@@ -1,33 +1,29 @@
 # Hive submission frontend
 
-Start the FastAPI backend from the repository root:
+The default page is the M1 Mandelbrot pool: 64 independent GPU tiles, live
+assembly, contributor capabilities and contribution counts, cancellation and
+PNG download. Open `/node/` on each contributor and click Start contributing.
+Keep contributor pages visible.
 
-```sh
-backend/.venv/bin/python -m uvicorn backend.main:app --ws-max-size 12000000
-```
-
-Then, from this directory:
+From this directory, with Node 22.12+ for build tooling:
 
 ```sh
 npm ci
-npm run dev
+npm run build
 ```
 
-Open the Vite URL (normally http://localhost:5173). Upload a `.py` file or edit
-its source, analyze compatibility, review/edit the proposed kernel, validate,
-configure inputs, and submit. Open the GPU node link in one or more tabs before
-submitting. Verification requires two nodes. The Mandelbrot example renders
-its completed results in a canvas.
+Then start the Python backend from the repository root. FastAPI serves the built
+frontend at `/`, so one HTTPS tunnel to the backend supports submitters and nodes.
+See [M1_PROTOCOL.md](../../M1_PROTOCOL.md) for setup, messages and testing.
 
-Automatic conversion currently handles a single function with one input list,
-an empty output list, a loop appending independent +, -, * arithmetic, and a
-return of that output list. Other code receives findings and requires manual
-rewriting. Uploaded source is never executed by the server.
+For development, start the backend on port 8000, then run `npm run dev` here.
+Vite proxies `/pool`, `/shared`, `/node` and legacy API routes. Override the
+backend URL with `HIVE_API_URL=http://127.0.0.1:8001 npm run dev` when needed.
+A separately hosted production frontend requires equivalent HTTP/WebSocket
+proxy routes. `npm run lint` checks frontend source.
 
-Vite proxies API and node routes to http://127.0.0.1:8000. Override with
-`HIVE_API_URL=http://127.0.0.1:8001 npm run dev` if needed. For production,
-configure equivalent proxy routes for `/kernels`, `/jobs`, `/node`, and `/nodes`
-on the frontend host. `npm run build` produces the frontend bundle;
-`npm run lint` checks its source.
-
-See ../../PROTOCOL.md for API details and limitations.
+The Python kernel prototype navigation tab preserves the earlier upload,
+compatibility report, editable preview and submission flow. It uses worker
+pages at `/legacy-node/` and the legacy `/jobs`, `/nodes`, `/kernels` API.
+See [PROTOCOL.md](../../PROTOCOL.md). Arbitrary Python/CUDA files cannot run on
+these browser nodes.

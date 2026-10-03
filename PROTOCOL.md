@@ -1,4 +1,9 @@
-# Hive protocol v1
+# Legacy Python-kernel protocol
+
+The current browser GPU pool (M1) is documented in [M1_PROTOCOL.md](M1_PROTOCOL.md).
+This document covers the preserved Python-kernel prototype only. Its worker page
+is now `/legacy-node/`; use the Python kernel prototype tab in the submitter.
+
 
 Run from the repository root (Python 3.11+):
 
@@ -9,7 +14,7 @@ backend/.venv/bin/python -m py2wgsl.demo
 backend/.venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --ws-max-size 12000000
 ```
 
-Open **http://localhost:8000/node/** in two or more WebGPU-enabled browser tabs.
+Open **http://localhost:8000/legacy-node/** in two or more WebGPU-enabled browser tabs.
 Use localhost or HTTPS; remote HTTP pages cannot use WebGPU. `/docs` has the
 HTTP schemas. Set `CORS_ORIGINS` to a comma-separated origin list; defaults
 allow the Vite development frontend on localhost and 127.0.0.1 port 5173.
@@ -21,7 +26,7 @@ Use one uvicorn worker: jobs and nodes share an in-memory store.
 editable kernel previews, validation, configuration, and submission. It POSTs
 the schemas below, retains `job_id`, and polls GET until done or failed. Vite
 proxies the backend routes in development. The node page is provided separately
-at `/node/`. See the Python upload section below for setup and analysis messages.
+at `/legacy-node/`. See the Python upload section below for setup and analysis messages.
 
 ## Kernel contract
 
