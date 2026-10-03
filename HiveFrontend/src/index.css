@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #243c32;
+  background: #f5f6f1;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, a { -webkit-tap-highlight-color: transparent; }
+button { font: inherit; cursor: pointer; }
+button:disabled { cursor: wait; opacity: .6; }
+button:focus-visible, a:focus-visible { outline: 3px solid #bba56e; outline-offset: 5px; }
+.page { min-height: 100svh; display: flex; flex-direction: column; }
+.header { display: flex; justify-content: space-between; align-items: center; padding: 32px 6vw; gap: 20px; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-size: 26px; font-weight: 700; letter-spacing: -1px; text-decoration: none; color: inherit; }
+.brand svg { width: 31px; height: 31px; fill: none; stroke: #426950; stroke-width: 1.6; }
+.brand-dot { color: #a38747; margin-left: -9px; }
+.header-caption { color: #7a8276; font-size: 12px; }
+main { flex: 1; display: grid; place-items: center; padding: 48px 20px 80px; }
+.card { width: 100%; max-width: 480px; background: #fff; border: 1px solid #e3e7dc; border-radius: 24px; padding: 42px 40px 0; box-shadow: 0 12px 48px #233c3206; }
+.eyebrow { display: flex; align-items: center; gap: 8px; color: #66735b; font-size: 10px; font-weight: 600; letter-spacing: 1.7px; }
+.eyebrow > span { height: 6px; width: 6px; border-radius: 50%; background: #9cac83; }
+h1 { font-size: clamp(28px, 5vw, 34px); line-height: 1.2; letter-spacing: -1.15px; font-weight: 550; margin: 22px 0 16px; white-space: pre-line; overflow-wrap: anywhere; }
+.intro { color: #6b7367; font-size: 14px; line-height: 1.7; max-width: 310px; margin: 0 0 34px; }
+.signin-area { display: flex; flex-direction: column; align-items: center; }
+.google-button { min-height: 44px; max-width: 100%; }
+.google-button.busy { opacity: .55; pointer-events: none; }
+.note { font-size: 11px; color: #71796a; margin: 16px 0 0; line-height: 1.6; text-align: center; }
+.setup-state { border: 1px solid #e6e9df; background: #f9faf6; border-radius: 12px; padding: 18px; }
+.setup-state p { font-size: 14px; margin: 0 0 6px; }
+.setup-state span, .status { font-size: 12px; color: #6b7367; line-height: 1.6; }
+.account { display: flex; align-items: center; gap: 12px; border: 1px solid #e6e9df; padding: 15px; border-radius: 12px; }
+.avatar { flex-shrink: 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: #edf1e6; color: #576c46; font-size: 15px; }
+.account > div { min-width: 0; flex: 1; }
+.account strong { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.account div > span { display: block; font-size: 12px; color: #6b7367; margin-top: 3px; overflow-wrap: anywhere; }
+.account-check { color: #678651; font-size: 14px; }
+.logout { display: block; width: 100%; padding: 12px; border: 1px solid #d7dfcf; border-radius: 24px; background: white; color: #3d5944; font-size: 13px; margin-top: 20px; transition: background .15s; }
+.logout:hover { background: #f5f7ef; }
+.error { color: #9b4334; font-size: 12px; line-height: 1.6; margin-top: 20px; }
+.error p { margin: 0 0 8px; }
+.error button { border: 0; background: transparent; color: inherit; padding: 0; text-decoration: underline; }
+.card-footer { border-top: 1px solid #edf0e7; margin-top: 36px; padding: 20px 0; display: flex; align-items: center; justify-content: center; gap: 7px; color: #71796a; font-size: 10px; }
+.card-footer > span { width: 4px; height: 4px; border-radius: 50%; background: #b9c7a5; }
+.footer { display: flex; justify-content: space-between; gap: 20px; padding: 24px 6vw; color: #71796a; font-size: 11px; border-top: 1px solid #e6e9df; }
+@media (max-width: 520px) {
+  .header { padding: 24px; }
+  .header-caption { display: none; }
+  main { padding: 32px 16px 56px; }
+  .card { padding: 30px 20px 0; }
+  .footer { padding: 20px 24px; font-size: 10px; }
+}
