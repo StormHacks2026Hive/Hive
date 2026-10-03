@@ -17,12 +17,11 @@ Use one uvicorn worker: jobs and nodes share an in-memory store.
 
 ## Existing frontend
 
-`Frontend/HiveFrontend/src/App.jsx` is the Vite starter counter. It has no
-submission form, fetch calls, WebSocket client, API routes, or message contract.
-No existing frontend files were changed. Its future form should POST the
-following schema, retain `job_id`, then poll GET until done or failed. Configure
-its backend URL as `http://localhost:8000` in development or proxy `/jobs` in
-Vite. The node page is provided separately at `/node/`.
+`Frontend/HiveFrontend/src/App.jsx` provides Python uploads, source analysis,
+editable kernel previews, validation, configuration, and submission. It POSTs
+the schemas below, retains `job_id`, and polls GET until done or failed. Vite
+proxies the backend routes in development. The node page is provided separately
+at `/node/`. See the Python upload section below for setup and analysis messages.
 
 ## Kernel contract
 
@@ -268,3 +267,90 @@ changes, add GPU reductions for heavier jobs, and consider persistent storage
 and binary frames. Persistence/multiple server workers would be architectural
 changes and have not been introduced. The current server never executes
 submitted kernels; all GPU execution stays inside browser WebGPU.
+
+## Python upload and conversion preview
+
+Start the frontend alongside the backend:
+
+```sh
+cd Frontend/HiveFrontend
+npm ci
+npm run dev
+```
+
+Open the URL printed by Vite (normally http://localhost:5173). Vite proxies
+`/kernels`, `/jobs`, `/node`, and WebSocket `/nodes` to the backend on port 8000.
+Set `HIVE_API_URL` when launching Vite to use a different backend URL. The
+frontend production build needs equivalent proxy routes on its host.
+The UI includes file upload, source editing, findings, editable kernel preview,
+explicit validation, job configuration, submission, progress polling, typed
+array result downloads, and a Mandelbrot canvas preview. The input JSON array
+is encoded as a base64 typed array before POST /jobs.
+
+### POST /kernels/analyze
+
+Request: `{"source":"<Python source, 1–32000 characters>"}`. This endpoint
+parses source and optionally translates a recognized pattern; it never imports
+or executes the uploaded file.
+
+Response (HTTP 200, including unsupported code and syntax-error reports):
+
+```json
+{
+  "status": "conversion_available",
+  "findings": [
+    {"severity":"info","message":"Converted a one-input append loop with independent arithmetic into an elementwise kernel.","line":null},
+    {"severity":"warning","message":"The proposed kernel uses float32 arithmetic, which can differ from Python integers and float64. Review it and provide the input array separately.","line":null}
+  ],
+  "kernel": "<proposed kernel source>",
+  "mode": "data-slice",
+  "parameters": {}
+}
+```
+
+Status is `compatible` (already a compilable service kernel),
+`conversion_available` (a proposed conversion), or `manual_conversion_required`
+(no generated kernel, kernel/mode null). Findings have severity info/warning/error,
+message, and optional one-based line number. Invalid request fields/lengths
+return 422. Source is limited to 4000 AST nodes. Reports include at most 40
+individual incompatibility findings plus a summary.
+
+Automatic conversion recognizes **only** a complete single function with one
+argument and exactly three statements: an empty result list, a for-each loop
+that appends an expression, and return of that list. The expression may use
+its loop variable, finite numeric literals, unary +/- and binary +, -, *.
+No captured variables, library calls, divisions, additional statements,
+decorators, default/variadic arguments, or partial-function extraction are
+converted. All inputs become f32. Compilation is not a proof of Python
+semantic equivalence; the UI asks the user to review precision differences.
+
+### POST /kernels/validate
+
+Request: `{"source":"<edited kernel source>"}`.
+
+Response: `{"valid":true,"error":null,"bindings":[...],"uniforms":[...],"mode":"data-slice"}`
+using the same binding/uniform schemas as assign_chunk. An unsupported kernel
+returns HTTP 200 with valid false, a readable error, empty metadata, and mode
+null. This validates compilation and reserved argument declarations; /jobs
+still validates actual constants, input buffers and the total work budget.
+Validation never creates a job or dispatches work. Editing the kernel invalidates
+the frontend's prior validation.
+
+The Mandelbrot button loads a **hand-authored example**, explicitly labeled as
+such rather than claiming to convert arbitrary Mandelbrot programs. It generates
+256×256 pixels, up to 256 iterations each (within the 20 million job budget),
+uses no input arrays, and returns u32 escape iteration counts. Width × height
+must equal output count for image rendering. Larger requests must still fit
+the existing work budget. Python complex numbers need manual scalar rewriting.
+
+Optional UI integration check (backend and Vite must already be running):
+
+```sh
+backend/.venv/bin/pip install playwright
+backend/.venv/bin/python -m demos.upload_ui_check
+```
+
+Set `HIVE_UI_URL` to use a different Vite URL. This opens two Chrome GPU nodes,
+uploads supported/unsupported files, checks conversion and validation invalidation,
+executes the generated elementwise kernel, renders Mandelbrot, checks sampled
+pixels against scalar Python, and checks mobile overflow.

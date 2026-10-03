@@ -1,19 +1,33 @@
-# React + Vite
+# Hive submission frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Start the FastAPI backend from the repository root:
 
-Currently, two official plugins are available:
+```sh
+backend/.venv/bin/python -m uvicorn backend.main:app --ws-max-size 12000000
+```
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Then, from this directory:
 
-## React Compiler
+```sh
+npm ci
+npm run dev
+```
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+Open the Vite URL (normally http://localhost:5173). Upload a `.py` file or edit
+its source, analyze compatibility, review/edit the proposed kernel, validate,
+configure inputs, and submit. Open the GPU node link in one or more tabs before
+submitting. Verification requires two nodes. The Mandelbrot example renders
+its completed results in a canvas.
 
-Note: This will impact Vite dev & build performances.
-You can also try [the experimental native React Compiler support in plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md#rust-react-compiler) by using `compiler: true` in the plugin options instead of using the Babel plugin.
+Automatic conversion currently handles a single function with one input list,
+an empty output list, a loop appending independent +, -, * arithmetic, and a
+return of that output list. Other code receives findings and requires manual
+rewriting. Uploaded source is never executed by the server.
 
-## Expanding the Oxlint configuration
+Vite proxies API and node routes to http://127.0.0.1:8000. Override with
+`HIVE_API_URL=http://127.0.0.1:8001 npm run dev` if needed. For production,
+configure equivalent proxy routes for `/kernels`, `/jobs`, `/node`, and `/nodes`
+on the frontend host. `npm run build` produces the frontend bundle;
+`npm run lint` checks its source.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+See ../../PROTOCOL.md for API details and limitations.

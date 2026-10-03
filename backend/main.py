@@ -15,6 +15,7 @@ from .models import JobRequest, JobCreated, JobStatus, Register, Heartbeat, Chun
 from .compiler import compile_source, validate_job
 from .store import MemoryStore, Job
 from .scheduler import Scheduler
+from .converter import SourceRequest, CompatibilityReport, KernelValidation, analyze, validate_preview
 
 store = MemoryStore()
 scheduler = Scheduler(store)
@@ -30,6 +31,14 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_methods=['GET','POST'], allow_headers=['Content-Type'])
+
+@app.post('/kernels/analyze', response_model=CompatibilityReport)
+async def analyze_kernel(request: SourceRequest):
+    return analyze(request.source)
+
+@app.post('/kernels/validate', response_model=KernelValidation)
+async def validate_kernel(request: SourceRequest):
+    return validate_preview(request.source)
 
 @app.middleware('http')
 async def body_limit(request, call_next):
