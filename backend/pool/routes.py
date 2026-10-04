@@ -1,33 +1,44 @@
 import asyncio
 import contextlib
 import time
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from ..models import JobCreated
 from .models import (Incoming, Register, Registered, RequestChunk, Heartbeat,
-    Control, ChunkError, ChunkStarted, Subscribe, JobRequest, JobStatus, WorkerStatus, Manifest)
+    Control, ChunkError, ChunkStarted, Subscribe, JobStatus, WorkerStatus, Manifest)
 from .coordinator import Coordinator, SHADER, SHADER_ID
+from .workloads import JobSubmission, OnnxAnalysisRequest, onnx_plan
+from ..marked_python import AnalysisRequest, Analysis, analyze_marked
+from ..wgsl_analysis import WGSLAnalysisRequest, WGSLAnalysis, analyze_wgsl
 from .protocol import decode_result, MAX_FRAME
+
+RUNTIME_DIR = Path(__file__).resolve().parents[2] / 'HiveFrontend/node_modules/onnxruntime-web/dist'
+if not RUNTIME_DIR.is_dir():
+    RUNTIME_DIR = Path(__file__).resolve().parents[2] / 'Frontend/HiveFrontend/node_modules/onnxruntime-web/dist'
 
 router = APIRouter(prefix='/pool')
 pool = Coordinator()
 
 @router.get('/manifest', response_model=Manifest)
 async def manifest():
-    return Manifest(shader_id=SHADER_ID)
+    return Manifest(shader_id=SHADER_ID, onnx_runtime_ready=(RUNTIME_DIR / 'ort.webgpu.bundle.min.mjs').is_file())
 
 def get_job(job_id):
     job = pool.jobs.get(job_id)
     if not job:
-        raise HTTPException(404, 'Unknown or expired image job')
+        raise HTTPException(404, 'Unknown or expired job')
     return job
 
 @router.post('/jobs', response_model=JobCreated, status_code=202)
-async def create_job(request: JobRequest):
+async def create_job(request: JobSubmission):
     try:
+        if request.kind == 'onnx':
+            plan = await asyncio.to_thread(onnx_plan, request)
+            return JobCreated(job_id=pool.create(request, plan=plan).job_id)
         return JobCreated(job_id=pool.create(request).job_id)
     except ValueError as exc:
-        raise HTTPException(429, str(exc)) from exc
+        raise HTTPException(429 if 'retained' in str(exc) else 422, str(exc)) from exc
 
 @router.get('/jobs/{job_id}', response_model=JobStatus)
 async def status(job_id: str):
@@ -49,9 +60,10 @@ async def workers():
 
 @router.get('/assets/{shader_id}')
 async def asset(shader_id: str):
-    if shader_id != SHADER_ID:
-        raise HTTPException(404, 'Unknown shader')
-    return Response(SHADER, media_type='text/plain',headers={'Cache-Control':'public, max-age=31536000, immutable'})
+    data = SHADER if shader_id == SHADER_ID else next((job.assets[shader_id] for job in pool.jobs.values() if shader_id in job.assets), None)
+    if data is None:
+        raise HTTPException(404, 'Unknown or expired asset')
+    return Response(data, media_type='application/octet-stream', headers={'Cache-Control':'public, max-age=31536000, immutable'})
 
 @router.get('/jobs/{job_id}/chunks/{chunk_id}')
 async def chunk_result(job_id: str, chunk_id: str):
@@ -65,9 +77,47 @@ async def chunk_result(job_id: str, chunk_id: str):
 async def result(job_id: str):
     job = get_job(job_id)
     if job.status != 'done':
-        raise HTTPException(409, 'Image is not complete')
+        raise HTTPException(409, 'Job is not complete')
     return Response(bytes(job.image), media_type='application/octet-stream', headers={
-        'X-Image-Width': str(job.request.width), 'X-Image-Height': str(job.request.height), 'X-Pixel-Format':'rgba8'})
+        'X-Image-Width': str(getattr(job.request, 'width', 0)), 'X-Image-Height': str(getattr(job.request, 'height', 0)),
+        'X-Pixel-Format':job.output_format, 'X-Output-Shape':','.join(map(str,job.output_shape))})
+
+@router.post('/python/analyze', response_model=Analysis)
+async def python_analysis(request: AnalysisRequest):
+    return analyze_marked(request)
+
+@router.post('/wgsl/analyze', response_model=WGSLAnalysis)
+async def wgsl_analysis(request: WGSLAnalysisRequest):
+    return analyze_wgsl(request)
+
+@router.post('/onnx/analyze')
+async def onnx_analysis(request: OnnxAnalysisRequest):
+    try:
+        return await asyncio.to_thread(onnx_plan, request, True)
+    except ValueError as exc:
+        return {'status':'unsupported', 'findings':[str(exc)]}
+
+@router.get('/runtime/{filename}')
+async def runtime_asset(filename: str):
+    # Serve only the pinned runtime's public entry and WASM companions.
+    allowed = {'ort.webgpu.bundle.min.mjs', 'ort-wasm-simd-threaded.jsep.mjs', 'ort-wasm-simd-threaded.jsep.wasm', 'ort-wasm-simd-threaded.asyncify.mjs', 'ort-wasm-simd-threaded.asyncify.wasm', 'ort-wasm-simd-threaded.jspi.mjs', 'ort-wasm-simd-threaded.jspi.wasm'}
+    if filename not in allowed or not (RUNTIME_DIR / filename).is_file():
+        raise HTTPException(404, 'ONNX runtime asset unavailable; install frontend dependencies')
+    from fastapi.responses import FileResponse
+    return FileResponse(RUNTIME_DIR / filename, media_type='application/wasm' if filename.endswith('.wasm') else 'text/javascript')
+
+@router.get('/jobs/{job_id}/frames/{frame_index}')
+async def animation_frame(job_id: str, frame_index: int):
+    job = get_job(job_id)
+    if job.request.kind not in ('animation', 'mandelbrot'):
+        raise HTTPException(422, 'This job does not produce images')
+    chunks = [c for c in job.chunks if c.frame_index == frame_index]
+    if not chunks:
+        raise HTTPException(404, 'Unknown frame')
+    if any(c.output is None for c in chunks):
+        raise HTTPException(409, 'Frame is not complete')
+    size = job.request.width * job.request.height * 4
+    return Response(bytes(job.image[frame_index*size:(frame_index+1)*size]), media_type='application/octet-stream')
 
 @router.websocket('/nodes')
 async def nodes(socket: WebSocket):

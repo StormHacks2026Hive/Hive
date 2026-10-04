@@ -29,6 +29,7 @@ function spawn() {
       working: 'Working on GPU', readback: 'Awaiting server acceptance', disconnected: 'Disconnected · reconnecting' };
     $('status').textContent = states[m.state] || m.state;
     if (m.tile) $('last').textContent = `Tile (${m.tile.x}, ${m.tile.y}) · ${m.tile.width} × ${m.tile.height}`;
+    else if (m.kind) $('last').textContent = `${m.kind} · offset ${m.offset} · count ${m.count}`;
     if (m.elapsed_ms) $('timing').textContent = `${m.elapsed_ms.toFixed(2)} ms`;
     if (m.error) $('error').textContent = m.error;
     if (m.state === 'disconnected' && running) {

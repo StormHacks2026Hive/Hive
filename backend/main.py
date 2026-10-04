@@ -132,6 +132,8 @@ app.mount('/node', StaticFiles(directory=Path(__file__).resolve().parents[1] / '
 app.mount('/legacy-node', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'legacy-node-web', html=True), name='legacy-node')
 app.mount('/shared', StaticFiles(directory=Path(__file__).resolve().parents[1] / 'shared'), name='shared')
 # Building the frontend before starting uvicorn enables a single-origin deployment.
-frontend_dist = Path(__file__).resolve().parents[1] / 'Frontend/HiveFrontend/dist'
+frontend_dist = Path(__file__).resolve().parents[1] / 'HiveFrontend/dist'
+if not frontend_dist.is_dir():
+    frontend_dist = Path(__file__).resolve().parents[1] / 'Frontend/HiveFrontend/dist'
 if frontend_dist.is_dir():
     app.mount('/', StaticFiles(directory=frontend_dist, html=True), name='submitter')

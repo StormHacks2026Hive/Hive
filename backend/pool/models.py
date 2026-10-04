@@ -24,6 +24,7 @@ class JobRequest(Model):
 
 class Manifest(Model):
     shader_id: str
+    onnx_runtime_ready: bool = False
     width: int = 512
     height: int = 512
     tile_size: int = 64
@@ -50,6 +51,7 @@ class Benchmark(Model):
     elapsed_ms: float = Field(gt=0, le=120000)
 
 class Capabilities(Model):
+    onnx: bool = False
     webgpu: Literal[True]
     adapter: Adapter
     limits: Limits
@@ -107,12 +109,24 @@ class Assignment(Wire):
     job_id: str
     chunk_id: str
     attempt_id: str
-    kind: Literal['image_tile'] = 'image_tile'
-    shader_id: str
-    tile: Tile
-    image: Image
-    parameters: Parameters
-    output_format: Literal['rgba8'] = 'rgba8'
+    kind: Literal['image_tile', 'compute', 'onnx_batch'] = 'image_tile'
+    shader_id: str | None = None
+    tile: Tile | None = None
+    image: Image | None = None
+    parameters: Parameters | None = None
+    frame_index: int = 0
+    offset: int = 0
+    count: int = 0
+    bindings: list[dict] = Field(default_factory=list)
+    uniforms: list[dict] = Field(default_factory=list)
+    compute_parameters: dict[str, int | float] = Field(default_factory=dict)
+    input: dict | None = None
+    model_id: str | None = None
+    input_name: str | None = None
+    output_name: str | None = None
+    input_shape: list[int] | None = None
+    output_shape: list[int] | None = None
+    output_format: Literal['rgba8', 'f32', 'u32', 'i32'] = 'rgba8'
     timeout_ms: int
 
 class ResultHeader(Wire):
@@ -120,8 +134,8 @@ class ResultHeader(Wire):
     job_id: str
     chunk_id: str
     attempt_id: str
-    output_format: Literal['rgba8']
-    byte_length: int = Field(ge=1, le=16384)
+    output_format: Literal['rgba8', 'f32', 'u32', 'i32']
+    byte_length: int = Field(ge=1, le=1048576)
     elapsed_ms: float = Field(gt=0, le=120000)
 
 class ResultAck(Wire):
@@ -156,7 +170,10 @@ class WorkerStatus(Model):
 
 class AcceptedTile(Model):
     chunk_id: str
-    tile: Tile
+    frame_index: int = 0
+    offset: int = 0
+    count: int = 0
+    tile: Tile | None = None
     url: str
     worker_id: str
     worker_label: str
@@ -169,6 +186,11 @@ class Contribution(Model):
     elapsed_ms: float
 
 class JobStatus(Model):
+    kind: str = 'mandelbrot'
+    frame_count: int = 1
+    fps: int = 12
+    output_format: str = 'rgba8'
+    output_shape: list[int] = Field(default_factory=list)
     job_id: str
     status: Literal['queued', 'running', 'done', 'failed', 'cancelled']
     progress: float
@@ -176,7 +198,7 @@ class JobStatus(Model):
     total_chunks: int
     width: int
     height: int
-    parameters: Parameters
+    parameters: Parameters | None = None
     tiles: list[AcceptedTile]
     contributions: list[Contribution]
     retries: int

@@ -24,6 +24,7 @@ async function connect(config) {
     });
     // The coordinator exposes the immutable built-in shader ID in this manifest.
     const manifest = await fetch('/pool/manifest').then(r => { if (!r.ok) throw new Error('Manifest unavailable'); return r.json(); });
+    gpu.capabilities.onnx = manifest.onnx_runtime_ready;
     let timer;
     const benchmark = await Promise.race([gpu.benchmark(manifest.shader_id), new Promise((_, reject) => {
       timer = setTimeout(() => { gpu.destroy(); reject(new Error('GPU benchmark timed out')); }, 15000);
@@ -53,7 +54,7 @@ async function connect(config) {
         if (chunk.type === 'cancel_attempt') { reset(chunk.reason); return; }
         if (chunk.type !== 'assign_chunk') return;
         if (current || awaitingAck) throw new Error('Worker received concurrent assignments');
-        current = chunk; report('working', { tile: chunk.tile, job_id: chunk.job_id });
+        current = chunk; report('working', { tile: chunk.tile, kind: chunk.kind, offset: chunk.offset, count: chunk.count, frame_index: chunk.frame_index, job_id: chunk.job_id });
         send({ type: 'chunk_started', chunk_id: chunk.chunk_id, attempt_id: chunk.attempt_id });
         let timer;
         const result = await Promise.race([gpu.render(chunk), new Promise((_, reject) => {
@@ -62,7 +63,7 @@ async function connect(config) {
         if (stopped || socket.readyState !== WebSocket.OPEN) return;
         awaitingAck = true;
         socket.send(resultFrame({ v: 1, type: 'chunk_result', job_id: chunk.job_id,
-          chunk_id: chunk.chunk_id, attempt_id: chunk.attempt_id, output_format: 'rgba8',
+          chunk_id: chunk.chunk_id, attempt_id: chunk.attempt_id, output_format: chunk.output_format,
           byte_length: result.pixels.byteLength, elapsed_ms: result.elapsed_ms }, result.pixels));
         report('readback', { elapsed_ms: result.elapsed_ms });
       } catch (e) {

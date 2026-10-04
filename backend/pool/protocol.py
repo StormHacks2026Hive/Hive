@@ -1,7 +1,7 @@
 import struct
 from .models import ResultHeader
 
-MAX_FRAME = 32768
+MAX_FRAME = 1_053_000
 
 def decode_result(frame: bytes):
     if not 4 <= len(frame) <= MAX_FRAME:

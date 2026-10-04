@@ -1,8 +1,8 @@
 # Milestone 1: Python-coordinated browser GPU pool
 
-This milestone is complete; stop here for multi-computer testing. Animation,
-ONNX inference, arbitrary shader uploads, and marked Python compilation are not
-implemented in this milestone. The coordinator remains FastAPI/asyncio/Pydantic.
+This is the historical M1 contract. The pool now also supports animation, ONNX
+batches, custom WGSL, and marked Python; see [WORKLOADS.md](WORKLOADS.md) for the
+current extensions, updated bounds, and active `HiveFrontend/` source. The coordinator remains FastAPI/asyncio/Pydantic.
 It schedules work and copies output bytes; fractal computation runs on WebGPU.
 
 ## Run one server and share one HTTPS origin
@@ -294,10 +294,11 @@ completion. Increase max_iterations to 1024 if the default completes too quickly
 to observe. Keep the surviving worker visible. Test restoration by reloading
 and loading the job ID.
 
-## Next milestones, not implemented
+## Later milestones (now extended)
 
+The implemented extensions are documented in [WORKLOADS.md](WORKLOADS.md).
 M2 reuses tile coordinates plus a frame index and assembles frames in order.
 M3 adds per-worker model caching and declared independent inference batches,
 with operator/shape checks and ordered tensor assembly. M4 adds restricted
-marked Python compilation. None turns arbitrary Python/CUDA files into portable
-browser execution, and none pools separate machines' GPU memory into one device.
+marked Python compilation. These extensions do not turn arbitrary Python/CUDA
+files into portable browser execution or pool GPU memory into one device.

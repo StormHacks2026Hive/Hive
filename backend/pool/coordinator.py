@@ -1,11 +1,13 @@
 """Pull scheduling with short leases. All state changes happen on one event loop."""
 import asyncio
 import hashlib
+import math
+import struct
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
-from .models import (Assignment, Image, Tile, AcceptedTile, WorkerStatus,
+from .models import (Assignment, Tile, AcceptedTile, WorkerStatus,
     Contribution, JobStatus, Snapshot, TileReady, NoWork, ResultAck)
 
 SHADER = Path(__file__).with_name('mandelbrot.wgsl').read_bytes()
@@ -14,7 +16,12 @@ SHADER_ID = hashlib.sha256(SHADER).hexdigest()
 @dataclass
 class Chunk:
     chunk_id: str
-    tile: Tile
+    tile: Tile | None
+    assignment: dict = field(default_factory=dict)
+    byte_length: int = 16384
+    offset: int = 0
+    count: int = 4096
+    frame_index: int = 0
     attempts: int = 0
     worker_id: str | None = None
     previous_worker: str | None = None
@@ -29,6 +36,9 @@ class Job:
     request: object
     chunks: list[Chunk]
     image: bytearray
+    assets: dict = field(default_factory=dict)
+    output_format: str = 'rgba8'
+    output_shape: list = field(default_factory=list)
     status: str = 'queued'
     error: str | None = None
     contributions: dict = field(default_factory=dict)
@@ -56,12 +66,35 @@ class Coordinator:
         self.heartbeat_timeout = heartbeat_timeout
         self.max_attempts = max_attempts
 
-    def create(self, request):
+    def create(self, request, plan=None):
         if len(self.jobs) >= 16:
-            raise ValueError('16 retained image jobs maximum; cancel or wait for 30-minute result expiry')
-        chunks = [Chunk(f'tile-{y//64:02d}-{x//64:02d}', Tile(x=x, y=y))
-            for y in range(0, request.height, 64) for x in range(0, request.width, 64)]
-        job = Job(uuid4().hex, request, chunks, bytearray(request.width * request.height * 4))
+            raise ValueError('16 retained jobs maximum; wait for 30-minute result expiry')
+        from .workloads import AnimationRequest, WGSLRequest, PythonRequest, compute_plan, onnx_plan
+        if request.kind in ('mandelbrot', 'animation'):
+            frames = request.frames if isinstance(request, AnimationRequest) else [request.parameters]
+            step = 512 if isinstance(request, AnimationRequest) and request.distribution == 'frames' else 64
+            chunks = []
+            for frame_index, parameters in enumerate(frames):
+                for y in range(0, request.height, step):
+                    for x in range(0, request.width, step):
+                        chunk_id = f'tile-{y//64:02d}-{x//64:02d}'
+                        if request.kind == 'animation':
+                            chunk_id = f'frame-{frame_index:03d}-' + chunk_id
+                        tile = Tile(x=x, y=y, width=step, height=step)
+                        chunks.append(Chunk(chunk_id, tile, frame_index=frame_index,
+                            byte_length=step*step*4, count=step*step,
+                            assignment={'shader_id':SHADER_ID, 'tile':tile.model_dump(),
+                                'image':{'width':request.width,'height':request.height},
+                                'parameters':parameters.model_dump(), 'frame_index':frame_index}))
+            job = Job(uuid4().hex, request, chunks, bytearray(request.width * request.height * 4 * len(frames)),
+                output_shape=[len(frames),request.height,request.width,4])
+        else:
+            plan = plan or (compute_plan(request) if isinstance(request, (WGSLRequest, PythonRequest)) else onnx_plan(request))
+            chunks = [Chunk(tile=None, **c) for c in plan['chunks']]
+            job = Job(uuid4().hex, request, chunks, bytearray(plan['size']), assets=plan['assets'],
+                output_format=plan['output_format'], output_shape=plan['output_shape'])
+        if sum(len(j.image) + sum(len(a) for a in j.assets.values()) for j in self.jobs.values()) + len(job.image) + sum(len(a) for a in job.assets.values()) > 134_217_728:
+            raise ValueError('128 MiB retained output/asset capacity reached; wait for result expiry')
         self.jobs[job.job_id] = job
         return job
 
@@ -77,7 +110,9 @@ class Coordinator:
         accepted = [c.accepted for c in job.chunks if c.accepted]
         return JobStatus(job_id=job.job_id, status=job.status, progress=len(accepted)/len(job.chunks),
             completed_chunks=len(accepted), total_chunks=len(job.chunks),
-            width=job.request.width, height=job.request.height, parameters=job.request.parameters,
+            kind=job.request.kind, frame_count=len(getattr(job.request, 'frames', [None])),
+            fps=getattr(job.request, 'fps', 12), output_format=job.output_format, output_shape=job.output_shape,
+            width=getattr(job.request, 'width', 0), height=getattr(job.request, 'height', 0), parameters=getattr(job.request, 'parameters', None),
             tiles=accepted, contributions=list(job.contributions.values()),
             retries=sum(max(0, c.attempts-1) for c in job.chunks), error=job.error,
             result_url=f'/pool/jobs/{job.job_id}/result' if job.status=='done' else None)
@@ -109,12 +144,21 @@ class Coordinator:
         self.publish_workers()
         return w
 
-    def compatible(self, worker):
+    def compatible(self, worker, chunk=None):
         l = worker.capabilities.limits
-        return (l.maxBufferSize >= 16384 and l.maxStorageBufferBindingSize >= 16384
-            and l.maxUniformBufferBindingSize >= 48 and l.maxComputeWorkgroupSizeX >= 8
-            and l.maxComputeWorkgroupSizeY >= 8 and l.maxComputeInvocationsPerWorkgroup >= 64
-            and l.maxComputeWorkgroupsPerDimension >= 8)
+        if chunk is None or chunk.tile is not None:
+            size = chunk.byte_length if chunk else 16384
+            groups = math.ceil((chunk.tile.width if chunk else 64)/8)
+            return (l.maxBufferSize >= size and l.maxStorageBufferBindingSize >= size
+                and l.maxUniformBufferBindingSize >= 48 and l.maxComputeWorkgroupSizeX >= 8
+                and l.maxComputeWorkgroupSizeY >= 8 and l.maxComputeInvocationsPerWorkgroup >= 64
+                and l.maxComputeWorkgroupsPerDimension >= groups)
+        if chunk.assignment['kind'] == 'onnx_batch':
+            input_size = math.prod(chunk.assignment['input_shape'])*4
+            return worker.capabilities.onnx and min(l.maxBufferSize, l.maxStorageBufferBindingSize) >= max(input_size,chunk.byte_length)
+        return (min(l.maxBufferSize,l.maxStorageBufferBindingSize) >= chunk.byte_length
+            and l.maxUniformBufferBindingSize >= 16 and l.maxComputeWorkgroupSizeX >= 64
+            and l.maxComputeInvocationsPerWorkgroup >= 64 and l.maxComputeWorkgroupsPerDimension >= math.ceil(chunk.count/64))
 
     def find(self, worker, chunk_id, attempt_id):
         if not worker.busy:
@@ -155,26 +199,23 @@ class Coordinator:
     def pull(self, worker):
         if worker.worker_id not in self.workers or worker.busy or not worker.active or not worker.visible:
             return NoWork(reason='Worker is paused or already working')
-        if not self.compatible(worker):
-            return NoWork(reason='Device limits do not support this shader')
         for job in self.jobs.values():
             if job.status not in ('queued','running'):
                 continue
             for chunk in job.chunks:
-                if chunk.output is not None or chunk.worker_id is not None:
+                if chunk.output is not None or chunk.worker_id is not None or not self.compatible(worker, chunk):
                     continue
-                if chunk.previous_worker == worker.worker_id and any(w.worker_id != worker.worker_id and w.active and w.visible and not w.busy and self.compatible(w) for w in self.workers.values()):
+                if chunk.previous_worker == worker.worker_id and any(w.worker_id != worker.worker_id and w.active and w.visible and not w.busy and self.compatible(w, chunk) for w in self.workers.values()):
                     continue
                 chunk.attempts += 1
                 chunk.worker_id, chunk.attempt_id = worker.worker_id, uuid4().hex
-                chunk.deadline = time.monotonic() + self.lease
+                duration = max(60, self.lease) if job.request.kind == 'onnx' else self.lease
+                chunk.deadline = time.monotonic() + duration
                 worker.busy = (job.job_id, chunk.chunk_id)
                 job.status = 'running'
                 self.publish(job)
                 return Assignment(job_id=job.job_id, chunk_id=chunk.chunk_id,
-                    attempt_id=chunk.attempt_id, shader_id=SHADER_ID, tile=chunk.tile,
-                    image=Image(width=job.request.width,height=job.request.height),
-                    parameters=job.request.parameters, timeout_ms=int(self.lease*1000))
+                    attempt_id=chunk.attempt_id, timeout_ms=int(duration*1000), **chunk.assignment)
         return NoWork()
 
     def accept(self, worker, header, payload):
@@ -189,18 +230,26 @@ class Coordinator:
             self.release(worker, 'Result arrived after lease expiry')
             worker.active = False
             return ResultAck(chunk_id=header.chunk_id, attempt_id=header.attempt_id, disposition='stale')
-        if len(payload) != chunk.tile.width * chunk.tile.height * 4 or header.byte_length != len(payload):
-            self.release(worker, 'Invalid RGBA tile length')
-            raise ValueError('Invalid RGBA tile length')
+        if len(payload) != chunk.byte_length or header.byte_length != len(payload) or header.output_format != job.output_format:
+            self.release(worker, 'Invalid output length or format')
+            raise ValueError('Invalid output length or format')
+        if job.output_format == 'f32' and any(not math.isfinite(v[0]) for v in struct.iter_unpack('<f', payload)):
+            self.release(worker, 'Non-finite float output')
+            raise ValueError('Non-finite float output')
         chunk.output = payload
-        chunk.accepted = AcceptedTile(chunk_id=chunk.chunk_id, tile=chunk.tile,
+        chunk.accepted = AcceptedTile(chunk_id=chunk.chunk_id, tile=chunk.tile, frame_index=chunk.frame_index, offset=chunk.offset, count=chunk.count,
             url=f'/pool/jobs/{job.job_id}/chunks/{chunk.chunk_id}', worker_id=worker.worker_id,
             worker_label=worker.label, elapsed_ms=header.elapsed_ms)
-        # Only byte placement occurs on the server, never fractal computation.
-        stride = chunk.tile.width * 4
-        for row in range(chunk.tile.height):
-            start = ((chunk.tile.y+row)*job.request.width+chunk.tile.x)*4
-            job.image[start:start+stride] = payload[row*stride:(row+1)*stride]
+        # Only byte placement occurs on the coordinator.
+        if chunk.tile is not None:
+            stride = chunk.tile.width * 4
+            frame_start = chunk.frame_index * job.request.width * job.request.height * 4
+            for row in range(chunk.tile.height):
+                start = frame_start + ((chunk.tile.y+row)*job.request.width+chunk.tile.x)*4
+                job.image[start:start+stride] = payload[row*stride:(row+1)*stride]
+        else:
+            start = chunk.offset*4
+            job.image[start:start+len(payload)] = payload
         worker.busy = None
         worker.completed += 1
         worker.compute_ms += header.elapsed_ms
