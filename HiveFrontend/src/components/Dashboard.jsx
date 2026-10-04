@@ -52,12 +52,15 @@ export default function Dashboard() {
   const [count, setCount] = useState(8192), [chunkSize, setChunkSize] = useState(1024)
   const [model, setModel] = useState(''), [modelName, setModelName] = useState(''), [shape, setShape] = useState(''), [batchSize, setBatchSize] = useState(32)
   const [frames, setFrames] = useState(12), [fps, setFps] = useState(12), [distribution, setDistribution] = useState('tiles')
+  const [imageWidth, setImageWidth] = useState(''), [imageHeight, setImageHeight] = useState('')
   const [displayedFrame, setDisplayedFrame] = useState('')
   const [report, setReport] = useState(null), [candidateLine, setCandidateLine] = useState('')
   const [job, setJob] = useState(null), [workers, setWorkers] = useState([]), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [restoreId, setRestoreId] = useState(''), [frame, setFrame] = useState(0), [playing, setPlaying] = useState(false), [preview, setPreview] = useState([])
   const canvas = useRef(null), revision = useRef(0), frameCache = useRef(new Map())
   const source = sources[kind] || '', jobId = job?.job_id
+  const imageSource = kind === 'wgsl' && /WGSL_SHADER|texture_storage_2d/.test(source)
+  const imageOptions = { ...(imageWidth ? { width: Number(imageWidth) } : {}), ...(imageHeight ? { height: Number(imageHeight) } : {}) }
   const running = ['queued', 'running'].includes(job?.status)
   function edit(action) { revision.current++; setReport(null); setError(''); action() }
   useEffect(() => {
@@ -87,18 +90,18 @@ export default function Dashboard() {
       const context = canvas.current?.getContext('2d')
       if (!context) return
       setDisplayedFrame('')
-      context.clearRect(0, 0, 512, 512)
+      context.clearRect(0, 0, job.width, job.height)
       if (tiles.length !== expected) return
       try {
         let bytes = frameCache.current.get(key)
         if (!bytes) {
           const response = await fetch(`/pool/jobs/${jobId}/frames/${frame}`)
-          if (!response.ok) throw new Error('Could not load the animation frame')
+          if (!response.ok) throw new Error('Could not load the rendered image')
           bytes = new Uint8ClampedArray(await response.arrayBuffer())
           if (frameCache.current.size >= 32) frameCache.current.delete(frameCache.current.keys().next().value)
           frameCache.current.set(key, bytes)
         }
-        if (alive) { context.putImageData(new ImageData(bytes, 512, 512), 0, 0); setDisplayedFrame(key) }
+        if (alive) { context.putImageData(new ImageData(bytes, job.width, job.height), 0, 0); setDisplayedFrame(key) }
       } catch (e) { if (alive) setError(e.message) }
     }
     draw()
@@ -126,13 +129,17 @@ export default function Dashboard() {
     const version = ++revision.current; setReport(null); setError('')
     if (kind === 'onnx') { setModel(''); setModelName('') }
     try {
-      if (file.size > (kind === 'onnx' ? 4194304 : 32000)) throw new Error('File exceeds the upload size limit')
+      if (file.size > (kind === 'onnx' ? 4194304 : 65536)) throw new Error('File exceeds the upload size limit')
       if (kind === 'onnx') {
         const value = base64(new Uint8Array(await file.arrayBuffer()))
         if (version === revision.current) { setModel(value); setModelName(file.name) }
       } else {
         const value = await file.text()
-        if (version === revision.current) setSources(values => ({ ...values, [kind]: value }))
+        if (version === revision.current) {
+          const target = /WGSL_SHADER/.test(value) ? 'wgsl' : kind
+          setSources(values => ({ ...values, [target]: value })); setKind(target)
+          setImageWidth(''); setImageHeight('')
+        }
       }
     } catch (e) { if (version === revision.current) setError(e.message) }
   }
@@ -142,6 +149,8 @@ export default function Dashboard() {
       let value
       if (kind === 'python') {
         value = await api('/pool/python/analyze', { source, auto_mark: autoMark, ...(candidateLine ? { candidate_line: Number(candidateLine) } : {}) })
+      } else if (imageSource) {
+        value = await api('/pool/wgsl/image/analyze', { source, ...imageOptions })
       } else if (kind === 'wgsl') {
         const total = useInput ? JSON.parse(input).length : Number(count)
         value = await api('/pool/wgsl/analyze', { source, count: total, chunk_size: Number(chunkSize) })
@@ -172,6 +181,8 @@ export default function Dashboard() {
           const zoom = 1 + i * .035
           return { ...BASE, xmin: -.75 - 1.5 / zoom, xmax: -.75 + 1.5 / zoom, ymin: -1.5 / zoom, ymax: 1.5 / zoom }
         }) }
+      } else if (imageSource) {
+        request = { kind: 'wgsl_image', source, ...imageOptions }
       } else if (kind === 'onnx') {
         request = { kind, model, input: typedInput(input), input_shape: shape.split(',').map(Number), batch_size: Number(batchSize), independent: true }
       } else {
@@ -215,17 +226,17 @@ export default function Dashboard() {
           <div className="configuration"><label>Frames<input type="number" min="1" max="32" value={frames} onChange={e => setFrames(e.target.value)} /></label><label>Frames per second<input type="number" min="1" max="60" value={fps} onChange={e => setFps(e.target.value)} /></label></div>
           <label>Distribute<select aria-label="Distribute" value={distribution} onChange={e => setDistribution(e.target.value)}><option value="tiles">Image tiles across all frames</option><option value="frames">One complete frame per chunk</option></select></label>
         </> : <>
-          <label className="upload">{kind === 'onnx' ? 'Upload model (.onnx, up to 4 MiB)' : `Upload ${kind === 'python' ? 'Python' : 'WGSL'} source`}<input key={kind} type="file" accept={kind === 'onnx' ? '.onnx' : kind === 'python' ? '.py' : '.wgsl'} onChange={e => uploadSource(e.target.files[0])} /></label>
+          <label className="upload">{kind === 'onnx' ? 'Upload model (.onnx, up to 4 MiB)' : `Upload ${kind === 'python' ? 'Python' : 'WGSL (.wgsl or Mandelbulb .py)'} source`}<input key={kind} type="file" accept={kind === 'onnx' ? '.onnx' : kind === 'python' ? '.py' : '.wgsl,.py'} onChange={e => uploadSource(e.target.files[0])} /></label>
           {kind === 'onnx' ? <>
             <p className="hint">{modelName || 'Choose a model to inspect its operators and sample dimensions.'} Each device caches the full model and processes a separate input batch.</p>
             <div className="configuration"><label>Input shape (comma separated)<input placeholder="Analyze to detect sample dimensions" value={shape} onChange={e => edit(() => setShape(e.target.value))} /></label><label>Samples per batch<input type="number" min="1" max="256" value={batchSize} onChange={e => edit(() => setBatchSize(e.target.value))} /></label></div>
           </> : <>
             <label htmlFor="workload-source">Source</label><textarea id="workload-source" spellCheck="false" value={source} onChange={e => edit(() => setSources(values => ({ ...values, [kind]: e.target.value })))} />
-            <p className="hint">{kind === 'python' ? 'Mark one for loop with # hive:parallel begin and # hive:parallel end, or let the analyzer insert markers. Supply its input array below.' : 'The analyzer recognizes independent array computations and rewrites buffer bindings and indexing for distributed chunks.'}</p>
-            {kind === 'wgsl' && <label className="checkbox"><input type="checkbox" checked={useInput} onChange={e => edit(() => setUseInput(e.target.checked))} />Use an input array</label>}
-            <div className="configuration"><label>Elements per chunk<input type="number" min="1" max="4096" value={chunkSize} onChange={e => edit(() => setChunkSize(e.target.value))} /></label>{!useInput && kind === 'wgsl' && <label>Total output elements<input type="number" min="1" max="2000000" value={count} onChange={e => edit(() => setCount(e.target.value))} /></label>}</div>
+            <p className="hint">{imageSource ? 'Mandelbulb renderer: upload extracts the shader and config. Render one still image; no input array is needed.' : kind === 'python' ? 'Mark one for loop with # hive:parallel begin and # hive:parallel end, or let the analyzer insert markers. Supply its input array below.' : 'The analyzer recognizes independent array computations and rewrites buffer bindings and indexing for distributed chunks.'}</p>
+            {kind === 'wgsl' && !imageSource && <label className="checkbox"><input type="checkbox" checked={useInput} onChange={e => edit(() => setUseInput(e.target.checked))} />Use an input array</label>}
+            {imageSource ? <div className="configuration"><label>Image width<input aria-label="Image width" type="number" min="1" max="4096" placeholder="From RenderConfig" value={imageWidth} onChange={e => edit(() => setImageWidth(e.target.value))} /></label><label>Image height<input aria-label="Image height" type="number" min="1" max="4096" placeholder="From RenderConfig" value={imageHeight} onChange={e => edit(() => setImageHeight(e.target.value))} /></label></div> : <div className="configuration"><label>Elements per chunk<input type="number" min="1" max="4096" value={chunkSize} onChange={e => edit(() => setChunkSize(e.target.value))} /></label>{!useInput && kind === 'wgsl' && <label>Total output elements<input type="number" min="1" max="2000000" value={count} onChange={e => edit(() => setCount(e.target.value))} /></label>}</div>}
           </>}
-          {(useInput || kind !== 'wgsl') && <><label htmlFor="workload-input">Input array (flat JSON numbers)</label><textarea id="workload-input" className="small" value={input} onChange={e => edit(() => setInput(e.target.value))} /></>}
+          {!imageSource && (useInput || kind !== 'wgsl') && <><label htmlFor="workload-input">Input array (flat JSON numbers)</label><textarea id="workload-input" className="small" value={input} onChange={e => edit(() => setInput(e.target.value))} /></>}
           <div className="actions"><button className="secondary" onClick={() => analyze(false)} disabled={busy}>Analyze {kind === 'onnx' ? 'model' : 'source'}</button>{kind === 'python' && <button className="secondary" onClick={() => analyze(true)} disabled={busy}>Find and mark parallel loop</button>}</div>
           {kind === 'python' && report?.candidates?.length > 1 && <label>Loop to mark<select aria-label="Loop to mark" value={candidateLine} onChange={e => setCandidateLine(e.target.value)}><option value="">Choose a loop</option>{report.candidates.map(c => <option key={c.line} value={c.line}>Line {c.line}: {c.pattern} ({c.input_name} → {c.output_name})</option>)}</select></label>}
         </>}
@@ -245,8 +256,8 @@ export default function Dashboard() {
     </div>
     {job && <section className="panel"><div className="panel-heading"><h2>Results · {job.kind}</h2><span className="mono">{jobId}</span></div><p role="status">{job.status} · {job.completed_chunks}/{job.total_chunks} chunks · {job.retries} retries</p><progress max="1" value={job.progress} />
       {job.status === 'queued' && <p>Waiting for a compatible contributor.</p>}{job.error && <p className="error">{job.error}</p>}
-      {job.output_format === 'rgba8' ? <><canvas ref={canvas} width="512" height="512" aria-label="Animation frame" />{job.frame_count > 1 && <><label>Frame {frame + 1} / {job.frame_count}<input type="range" min="0" max={job.frame_count - 1} value={frame} onChange={e => { setPlaying(false); setFrame(Number(e.target.value)) }} /></label><button className="secondary" disabled={job.status !== 'done'} onClick={() => setPlaying(!playing)}>{playing ? 'Pause animation' : 'Play animation'}</button></>}</> : <><p className="mono">{job.output_format} · shape [{job.output_shape.join(', ')}]</p>{preview.length > 0 && <pre aria-label="Output preview">{JSON.stringify(preview)}{job.output_shape.reduce((a,b) => a*b,1) > 32 ? '\nFirst 32 values shown' : ''}</pre>}</>}
-      <div className="actions"><button disabled={job.status !== 'done' || (job.output_format === 'rgba8' && displayedFrame !== `${jobId}:${frame}`)} onClick={download}>{job.output_format === 'rgba8' ? 'Download frame PNG' : 'Download output'}</button>{running && <button className="secondary" onClick={cancel}>Cancel job</button>}</div>
+      {job.output_format === 'rgba8' ? <><canvas ref={canvas} width={job.width} height={job.height} aria-label={job.kind === 'wgsl_image' ? 'Rendered image' : 'Animation frame'} />{job.frame_count > 1 && <><label>Frame {frame + 1} / {job.frame_count}<input type="range" min="0" max={job.frame_count - 1} value={frame} onChange={e => { setPlaying(false); setFrame(Number(e.target.value)) }} /></label><button className="secondary" disabled={job.status !== 'done'} onClick={() => setPlaying(!playing)}>{playing ? 'Pause animation' : 'Play animation'}</button></>}</> : <><p className="mono">{job.output_format} · shape [{job.output_shape.join(', ')}]</p>{preview.length > 0 && <pre aria-label="Output preview">{JSON.stringify(preview)}{job.output_shape.reduce((a,b) => a*b,1) > 32 ? '\nFirst 32 values shown' : ''}</pre>}</>}
+      <div className="actions"><button disabled={job.status !== 'done' || (job.output_format === 'rgba8' && displayedFrame !== `${jobId}:${frame}`)} onClick={download}>{job.output_format === 'rgba8' ? (job.kind === 'wgsl_image' ? 'Download image PNG' : 'Download frame PNG') : 'Download output'}</button>{running && <button className="secondary" onClick={cancel}>Cancel job</button>}</div>
       <ul className="findings">{job.contributions.map(c => <li key={c.worker_id}>{c.label} · {c.chunks} chunks · {c.elapsed_ms.toFixed(1)} ms</li>)}</ul>
     </section>}
   </main>

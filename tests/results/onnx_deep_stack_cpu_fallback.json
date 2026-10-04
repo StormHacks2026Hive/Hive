@@ -1,0 +1,17 @@
+{
+  "baseline_seconds": 33.19665454188362,
+  "parallel_seconds": 32.836191166657954,
+  "speedup": 1.0109776244569948,
+  "shares": {
+    "cpu-fallback": 184458
+  },
+  "finish_seconds": {
+    "cpu-fallback": 32.836191166657954
+  },
+  "idle_seconds": {
+    "cpu-fallback": 0.0
+  },
+  "layers": 32,
+  "batch": 184458,
+  "physical_gpus": 0
+}

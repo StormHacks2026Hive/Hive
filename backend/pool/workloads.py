@@ -9,6 +9,7 @@ from ..models import Model, TypedArray
 from ..compiler import compile_source
 from ..marked_python import AnalysisRequest, analyze_marked
 from .models import JobRequest, Parameters
+from .image_workloads import WGSLImageRequest
 
 class AnimationRequest(Model):
     kind: Literal['animation']
@@ -58,7 +59,7 @@ class OnnxAnalysisRequest(Model):
     samples: int = Field(default=256, ge=1, le=500_000)
     batch_size: int | None = Field(default=None, ge=1, le=256)
 
-JobSubmission = Annotated[Union[JobRequest, AnimationRequest, WGSLRequest, PythonRequest, OnnxRequest], Field(discriminator='kind'), BeforeValidator(lambda v: {'kind':'mandelbrot', **v} if isinstance(v, dict) else v)]
+JobSubmission = Annotated[Union[JobRequest, AnimationRequest, WGSLRequest, PythonRequest, OnnxRequest, WGSLImageRequest], Field(discriminator='kind'), BeforeValidator(lambda v: {'kind':'mandelbrot', **v} if isinstance(v, dict) else v)]
 
 
 def asset(data):
@@ -84,7 +85,7 @@ def compute_plan(request):
         uniforms = [vars(u) for u in kernel.uniforms]
         dtype = 'f32'
     else:
-        from ..wgsl_analysis import WGSLAnalysisRequest, analyze_wgsl
+        from ..wgsl_analyzer import WGSLAnalysisRequest, analyze_wgsl
         if request.splitting == 'auto':
             report = analyze_wgsl(WGSLAnalysisRequest(source=request.wgsl, count=total, chunk_size=request.chunk_size))
             if report.status != 'ready':

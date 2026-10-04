@@ -55,6 +55,7 @@ export class TileGPU {
     }
   }
   async render(chunk) {
+    if (chunk.kind === 'texture_tile') return this.textureRender(chunk);
     if (chunk.kind === 'compute') return this.compute(chunk);
     if (chunk.kind === 'onnx_batch') return this.infer(chunk);
     const start = performance.now();
@@ -92,6 +93,48 @@ export class TileGPU {
     } finally {
       if (!popped) await d.popErrorScope().catch(() => {});
       buffers.forEach(b => b.destroy());
+    }
+  }
+  async textureRender(chunk) {
+    const start = performance.now(), pipeline = await this.pipeline(chunk.shader_id);
+    const d = this.device, buffers = [];
+    let texture, popped = false;
+    d.pushErrorScope('validation');
+    try {
+      const make = (size, usage) => {
+        const buffer = d.createBuffer({ size, usage }); buffers.push(buffer); return buffer;
+      };
+      const t = chunk.tile;
+      const bytes = Uint8Array.from(atob(chunk.uniform_data), c => c.charCodeAt(0));
+      if (bytes.length !== 176) throw new Error('Renderer uniform size mismatch');
+      const uniform = make(176, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      const tile = make(32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+      d.queue.writeBuffer(uniform, 0, bytes);
+      d.queue.writeBuffer(tile, 0, new Uint32Array([t.x, t.y, 0, 0, t.width, t.height, 1, 0]));
+      texture = d.createTexture({ size: [t.width, t.height], format: 'rgba8unorm',
+        usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
+      const stride = Math.ceil(t.width * 4 / 256) * 256;
+      const readback = make(stride * t.height, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+      const bind = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: texture.createView() },
+        { binding: 1, resource: { buffer: uniform } },
+        { binding: 2, resource: { buffer: tile } },
+      ] });
+      const encoder = d.createCommandEncoder(), pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline); pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(Math.ceil(t.width / 8), Math.ceil(t.height / 8)); pass.end();
+      encoder.copyTextureToBuffer({ texture }, { buffer: readback, bytesPerRow: stride }, [t.width, t.height]);
+      d.queue.submit([encoder.finish()]);
+      const validation = await d.popErrorScope(); popped = true;
+      if (validation) throw new Error(validation.message);
+      await readback.mapAsync(GPUMapMode.READ);
+      const mapped = new Uint8Array(readback.getMappedRange()), pixels = new Uint8Array(t.width * t.height * 4);
+      for (let y = 0; y < t.height; y++) pixels.set(mapped.subarray(y * stride, y * stride + t.width * 4), y * t.width * 4);
+      readback.unmap();
+      return { pixels, elapsed_ms: Math.max(.01, performance.now() - start) };
+    } finally {
+      if (!popped) await d.popErrorScope().catch(() => {});
+      buffers.forEach(buffer => buffer.destroy()); texture?.destroy();
     }
   }
   async compute(chunk) {

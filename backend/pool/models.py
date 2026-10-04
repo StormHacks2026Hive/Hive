@@ -109,7 +109,8 @@ class Assignment(Wire):
     job_id: str
     chunk_id: str
     attempt_id: str
-    kind: Literal['image_tile', 'compute', 'onnx_batch'] = 'image_tile'
+    kind: Literal['image_tile', 'compute', 'onnx_batch', 'texture_tile'] = 'image_tile'
+    uniform_data: str | None = Field(default=None, max_length=1024)
     shader_id: str | None = None
     tile: Tile | None = None
     image: Image | None = None

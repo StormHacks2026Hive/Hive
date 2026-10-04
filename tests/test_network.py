@@ -27,7 +27,7 @@ def job_for(req):
     return Job('job', req, compile_source(req.kernel), req.input.decode() if req.input else None)
 
 def nodes(n=2):
-    return [Node(str(i), Socket(), LIMITS, time.monotonic()) for i in range(n)]
+    return [Node(str(i), Socket(), LIMITS, time.monotonic(), score=1) for i in range(n)]
 
 def test_source_translation_and_cache():
     k = compile_source(PI)
@@ -168,3 +168,14 @@ def test_http_payload_limit_and_array_encoding():
         payload=request('data-slice',input=TypedArray(dtype='f32',data='invalid'),parameters={'scale':2.,'bias':1.}).model_dump()
         assert client.post('/jobs',json=payload).status_code == 422
         assert client.get('/jobs/missing').status_code == 404
+
+
+def test_legacy_weighted_shares_and_unmeasured_fallback(caplog):
+    workers=nodes();workers[0].score=3
+    req=request(count=10000)
+    chunks=make_chunks('job',req,compile_source(PI),None,workers)
+    assert [c.message.count for c in chunks]==[7500,2500]
+    for worker in workers:worker.score=None
+    chunks=make_chunks('job',req,compile_source(PI),None,workers)
+    assert len(chunks)==1 and chunks[0].message.count==10000
+    assert 'No legacy compute scores' in caplog.text

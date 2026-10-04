@@ -9,8 +9,9 @@ from .models import (Incoming, Register, Registered, RequestChunk, Heartbeat,
     Control, ChunkError, ChunkStarted, Subscribe, JobStatus, WorkerStatus, Manifest)
 from .coordinator import Coordinator, SHADER, SHADER_ID
 from .workloads import JobSubmission, OnnxAnalysisRequest, onnx_plan
+from .image_workloads import ImageAnalysisRequest, ImageAnalysis, analyze_image
 from ..marked_python import AnalysisRequest, Analysis, analyze_marked
-from ..wgsl_analysis import WGSLAnalysisRequest, WGSLAnalysis, analyze_wgsl
+from ..wgsl_analyzer import WGSLAnalysisRequest, WGSLAnalysis, analyze_wgsl
 from .protocol import decode_result, MAX_FRAME
 
 RUNTIME_DIR = Path(__file__).resolve().parents[2] / 'HiveFrontend/node_modules/onnxruntime-web/dist'
@@ -90,6 +91,10 @@ async def python_analysis(request: AnalysisRequest):
 async def wgsl_analysis(request: WGSLAnalysisRequest):
     return analyze_wgsl(request)
 
+@router.post('/wgsl/image/analyze', response_model=ImageAnalysis)
+async def image_analysis(request: ImageAnalysisRequest):
+    return analyze_image(request)
+
 @router.post('/onnx/analyze')
 async def onnx_analysis(request: OnnxAnalysisRequest):
     try:
@@ -109,7 +114,7 @@ async def runtime_asset(filename: str):
 @router.get('/jobs/{job_id}/frames/{frame_index}')
 async def animation_frame(job_id: str, frame_index: int):
     job = get_job(job_id)
-    if job.request.kind not in ('animation', 'mandelbrot'):
+    if job.request.kind not in ('animation', 'mandelbrot', 'wgsl_image'):
         raise HTTPException(422, 'This job does not produce images')
     chunks = [c for c in job.chunks if c.frame_index == frame_index]
     if not chunks:

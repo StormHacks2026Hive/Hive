@@ -1,130 +1,81 @@
-import asyncio
-import time
-from dataclasses import dataclass
-from uuid import uuid4
-from .chunker import capacity, make_chunks
-from .aggregator import aggregate, equivalent
-from .models import Registered
+"""Dispatch ranked nodes and split plans, validate coverage and merge outputs.
 
-@dataclass
-class Node:
-    node_id: str
-    socket: object
-    limits: object
-    last_heartbeat: float
-    busy: str | None = None
+The legacy push scheduler remains exported for existing API clients. New compute
+execution uses one lane per measured node and ordered range/row-band assembly.
+Remote full-domain executors are explicit callbacks; the browser pool adapter
+supports the existing bounded 1D ABI rather than assuming a new wire contract.
+"""
 
-class Scheduler:
-    def __init__(self, store, timeout=15, heartbeat_timeout=30, max_attempts=4):
-        self.store = store
-        self.nodes = {}
-        self.timeout = timeout
-        self.heartbeat_timeout = heartbeat_timeout
-        self.max_attempts = max_attempts
-        self.lock = asyncio.Lock()
+from typing import Any, Callable
+from .common.legacy_scheduler import Scheduler as Scheduler, Node as Node
 
-    async def register(self, socket, message):
-        if not message.webgpu:
-            raise ValueError('WebGPU is required')
-        node = Node(uuid4().hex, socket, message.limits, time.monotonic())
-        await socket.send_json(Registered(node_id=node.node_id).model_dump())
-        self.nodes[node.node_id] = node
-        return node
 
-    def disconnect(self, node_id):
-        node = self.nodes.pop(node_id, None)
-        if node:
-            for job in self.store.jobs.values():
-                for chunk in job.chunks:
-                    if chunk.assigned == node_id and not chunk.done:
-                        chunk.assigned = None
+class ComputeScheduler:
+    """Dispatch ranked range/tile plans through local or explicit node transports."""
 
-    def fail_attempt(self, node, chunk, error):
-        node.busy = None
-        chunk.assigned = None
-        if chunk.attempts >= self.max_attempts:
-            job = self.store.get(chunk.message.job_id)
-            job.status, job.error = 'failed', error
+    def dispatch(self, plans: list[Any], execute: Callable[[Any], Any]) -> Any:
+        """Run one lane per node and retain ordered outputs plus measured timings."""
+        from .common.execution import dispatch
 
-    def find(self, node, message):
-        for job in self.store.jobs.values():
-            for chunk in job.chunks:
-                if chunk.message.chunk_id == message.chunk_id and chunk.assigned == node.node_id and chunk.message.attempt_id == message.attempt_id and job.status == 'running':
-                    return job, chunk
-        return None, None
+        return dispatch(plans, execute)
 
-    def result(self, node, result):
-        job, chunk = self.find(node, result)
-        if not chunk:
-            return  # stale attempt, never release the node's current work
-        try:
-            dtype = next(b.element_type for b in job.kernel.buffers if b.access == 'read_write')
-            if job.request.reduce:
-                if result.summary is None or result.summary.count != chunk.message.count:
-                    raise ValueError('Invalid reduction summary/count')
-                if job.request.reduce == 'count' and not 0 <= result.summary.value <= result.summary.count:
-                    raise ValueError('Invalid nonzero count')
-            elif result.output is None or result.output.dtype != dtype or len(result.output.decode()) != chunk.message.count:
-                raise ValueError('Invalid output length or dtype')
-            if job.request.verify:
-                if chunk.candidates and not equivalent(chunk.candidates[0], result):
-                    job.status, job.error = 'failed', 'Verification mismatch between nodes'
-                    node.busy, chunk.assigned = None, None
-                    return
-                chunk.candidates.append(result)
-                chunk.verifier_nodes.add(node.node_id)
-                if len(chunk.candidates) < 2:
-                    node.busy, chunk.assigned = None, None
-                    return
-            chunk.done = True
-            chunk.assigned = None
-            node.busy = None
-            job.results[chunk.message.chunk_id] = result
-            if len(job.results) == len(job.chunks):
-                job.result = aggregate(job.chunks, job.results, job.request.reduce, dtype)
-                job.status = 'done'
-                job.values = None
-        except (ValueError, OverflowError) as exc:
-            self.fail_attempt(node, chunk, str(exc))
+    def render_wgsl(
+        self,
+        source: str,
+        domain: tuple[int, int, int],
+        buffers: dict[int, bytes],
+        output_binding: int,
+        bytes_per_element: int,
+        plans: list[Any],
+    ) -> tuple[bytes, Any]:
+        """Dispatch full-domain shaders and copy only each owned row/cell region."""
+        from .wgsl_analyzer import dispatch_local
 
-    async def tick(self):
-        async with self.lock:
-            now = time.monotonic()
-            for node in list(self.nodes.values()):
-                timed_out = any(c.assigned == node.node_id and c.deadline < now for j in self.store.jobs.values() for c in j.chunks if not c.done)
-                if now - node.last_heartbeat > self.heartbeat_timeout or timed_out:
-                    self.disconnect(node.node_id)
-                    try:
-                        await asyncio.wait_for(node.socket.close(code=1013), 1)
-                    except Exception:
-                        pass
-            for job in self.store.jobs.values():
-                if job.status in ('done', 'failed'):
-                    continue
-                if not job.chunks:
-                    job.chunks = make_chunks(job.job_id, job.request, job.kernel, job.values, list(self.nodes.values()))
-                for chunk in job.chunks:
-                    if chunk.done or chunk.assigned:
-                        continue
-                    if chunk.attempts >= self.max_attempts:
-                        job.status, job.error = 'failed', 'Chunk retry limit exceeded'
-                        break
-                    for node in list(self.nodes.values()):
-                        if node.busy or node.node_id in chunk.verifier_nodes or capacity(node.limits, job.request.mode) < chunk.message.count:
-                            continue
-                        chunk.attempts += 1
-                        chunk.assigned, node.busy = node.node_id, chunk.message.chunk_id
-                        chunk.deadline = now + self.timeout
-                        chunk.message.attempt_id = uuid4().hex
-                        chunk.message.timeout_ms = int(self.timeout * 1000)
-                        job.status = 'running'
-                        try:
-                            await asyncio.wait_for(node.socket.send_json(chunk.message.model_dump()), 2)
-                        except Exception:
-                            self.disconnect(node.node_id)
-                        break
+        width, height, depth = domain
+        if depth != 1:
+            raise ValueError("Stitching currently supports 1D/2D domains")
+        total = width * height * bytes_per_element
+        is_1d = height == 1
+        expected = width if is_1d else height
+        ordered = sorted(plans, key=lambda p: p.start)
+        end = 0
+        for plan in ordered:
+            if plan.start != end or plan.stop <= plan.start:
+                raise ValueError("Tiles must cover the domain without overlap or gaps")
+            end = plan.stop
+        if end != expected:
+            raise ValueError("Incomplete tile coverage")
 
-    async def run(self):
-        while True:
-            await self.tick()
-            await asyncio.sleep(.25)
+        def execute(plan: Any) -> bytes:
+            offset = (plan.start, 0, 0) if is_1d else (0, plan.start, 0)
+            extent = (
+                (plan.stop - plan.start, 1, 1)
+                if is_1d
+                else (width, plan.stop - plan.start, 1)
+            )
+            if plan.node.execute:
+                raw = plan.node.execute(
+                    source, domain, buffers, output_binding, total, offset, extent
+                )
+            elif plan.node.device is not None:
+                raw = dispatch_local(
+                    source,
+                    domain,
+                    buffers,
+                    output_binding,
+                    total,
+                    plan.node.device,
+                    offset,
+                    extent,
+                )
+            else:
+                raise ValueError(
+                    "Node needs a local wgpu device or remote transport executor"
+                )
+            if len(raw) != total:
+                raise ValueError("Transport returned wrong full-domain buffer size")
+            stride = bytes_per_element if is_1d else width * bytes_per_element
+            return raw[plan.start * stride : plan.stop * stride]
+
+        result = self.dispatch(ordered, execute)
+        return b"".join(result.outputs), result

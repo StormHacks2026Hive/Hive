@@ -1,0 +1,30 @@
+{
+  "baseline_seconds": 33.116084250155836,
+  "parallel_seconds": 34.008780042175204,
+  "speedup": 0.9737510198568631,
+  "shares": {
+    "gpu-lane-0": 32784384,
+    "gpu-lane-1": 10928128
+  },
+  "finish_seconds": {
+    "gpu-lane-0": 34.00867187511176,
+    "gpu-lane-1": 34.008714250754565
+  },
+  "idle_seconds": {
+    "gpu-lane-0": 0.21601750561967492,
+    "gpu-lane-1": 0.17971964599564672
+  },
+  "batches": 667,
+  "invocations_per_batch": 65536,
+  "iterations_per_invocation": 65536,
+  "physical_gpus": 1,
+  "simulated_scores": [
+    3,
+    1
+  ],
+  "gpu_breakdown": {
+    "gpu_alu": 178332811058.838,
+    "memory_bandwidth": 11662994255.375326,
+    "host_device_transfer": 1254903692.7292697
+  }
+}

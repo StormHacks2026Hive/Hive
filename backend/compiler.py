@@ -7,8 +7,6 @@ from py2wgsl import compile_kernel_source, WGSLCompileError
 @lru_cache(maxsize=128)
 def compile_source(source: str):
     try:
-        if len(source) > 32000:
-            raise ValueError('Kernel too large')
         tree = ast.parse(source)
         if len(source) > 32000 or sum(1 for _ in ast.walk(tree)) > 4000:
             raise ValueError('Kernel too large')

@@ -56,6 +56,7 @@ class Limits(Model):
     bandwidth_mbps: float = Field(default=20, gt=0, le=100000)
 
 class Register(Model):
+    compute_score: float | None = Field(default=None, gt=0)
     type: Literal['register']
     webgpu: bool
     limits: Limits

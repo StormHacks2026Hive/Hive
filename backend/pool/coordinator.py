@@ -25,6 +25,7 @@ class Chunk:
     attempts: int = 0
     worker_id: str | None = None
     previous_worker: str | None = None
+    preferred_worker: str | None = None
     attempt_id: str | None = None
     deadline: float = 0
     output: bytes | None = None
@@ -88,6 +89,12 @@ class Coordinator:
                                 'parameters':parameters.model_dump(), 'frame_index':frame_index}))
             job = Job(uuid4().hex, request, chunks, bytearray(request.width * request.height * 4 * len(frames)),
                 output_shape=[len(frames),request.height,request.width,4])
+        elif request.kind == 'wgsl_image':
+            from .image_workloads import image_plan
+            plan=plan or image_plan(request)
+            request=request.model_copy(update={'width':plan['width'],'height':plan['height']})
+            chunks=[Chunk(**c) for c in plan['chunks']]
+            job=Job(uuid4().hex,request,chunks,bytearray(plan['size']),assets=plan['assets'],output_format='rgba8',output_shape=plan['output_shape'])
         else:
             plan = plan or (compute_plan(request) if isinstance(request, (WGSLRequest, PythonRequest)) else onnx_plan(request))
             chunks = [Chunk(tile=None, **c) for c in plan['chunks']]
@@ -150,7 +157,7 @@ class Coordinator:
             size = chunk.byte_length if chunk else 16384
             groups = math.ceil((chunk.tile.width if chunk else 64)/8)
             return (l.maxBufferSize >= size and l.maxStorageBufferBindingSize >= size
-                and l.maxUniformBufferBindingSize >= 48 and l.maxComputeWorkgroupSizeX >= 8
+                and l.maxUniformBufferBindingSize >= (176 if chunk and chunk.assignment.get('kind')=='texture_tile' else 48) and l.maxComputeWorkgroupSizeX >= 8
                 and l.maxComputeWorkgroupSizeY >= 8 and l.maxComputeInvocationsPerWorkgroup >= 64
                 and l.maxComputeWorkgroupsPerDimension >= groups)
         if chunk.assignment['kind'] == 'onnx_batch':
@@ -196,20 +203,50 @@ class Coordinator:
             self.release(worker, error)
             self.publish_workers()
 
+    def rank_pending(self, job):
+        """Reserve pending chunks by measured browser throughput and predicted load.
+
+        Fixed ABI chunks are transport granularity; node shares are weighted by
+        the existing Mandelbrot dispatch/readback probe, not worker count. This
+        is a workload proxy, not an ALU/network microbenchmark. Replan on every
+        pull so paused/offline workers cannot retain reservations.
+        """
+        from ..common.nodes import ComputeNode
+        from ..node_ranker import allocate
+        pending=[c for c in job.chunks if c.output is None and c.worker_id is None]
+        active=[w for w in self.workers.values() if w.active and w.visible and any(self.compatible(w,c) for c in pending)]
+        nodes=[ComputeNode(w.worker_id,w.capabilities.benchmark.pixels/(w.capabilities.benchmark.elapsed_ms/1000)) for w in active]
+        if not nodes:return
+        # Cost units are output elements. Buffers/dispatch limits constrain each
+        # indivisible chunk, so weighted quotas are approximated at chunk granularity.
+        quotas={node.node_id:count for node,count in allocate(sum(c.count for c in pending),nodes).items()}
+        scores={n.node_id:n.score for n in nodes}
+        allocated={w.worker_id:0 for w in active}
+        for chunk in pending:
+            eligible=[w for w in active if self.compatible(w,chunk)]
+            if not eligible:chunk.preferred_worker=None;continue
+            owner=min(eligible,key=lambda w:(allocated[w.worker_id]+chunk.count-quotas[w.worker_id])/scores[w.worker_id])
+            chunk.preferred_worker=owner.worker_id
+            allocated[owner.worker_id]+=chunk.count
+
     def pull(self, worker):
         if worker.worker_id not in self.workers or worker.busy or not worker.active or not worker.visible:
             return NoWork(reason='Worker is paused or already working')
         for job in self.jobs.values():
             if job.status not in ('queued','running'):
                 continue
+            self.rank_pending(job)
             for chunk in job.chunks:
                 if chunk.output is not None or chunk.worker_id is not None or not self.compatible(worker, chunk):
+                    continue
+                preferred=self.workers.get(chunk.preferred_worker)
+                if preferred and preferred.worker_id!=worker.worker_id and not preferred.busy:
                     continue
                 if chunk.previous_worker == worker.worker_id and any(w.worker_id != worker.worker_id and w.active and w.visible and not w.busy and self.compatible(w, chunk) for w in self.workers.values()):
                     continue
                 chunk.attempts += 1
                 chunk.worker_id, chunk.attempt_id = worker.worker_id, uuid4().hex
-                duration = max(60, self.lease) if job.request.kind == 'onnx' else self.lease
+                duration = max(60, self.lease) if job.request.kind in ('onnx','wgsl_image') else self.lease
                 chunk.deadline = time.monotonic() + duration
                 worker.busy = (job.job_id, chunk.chunk_id)
                 job.status = 'running'

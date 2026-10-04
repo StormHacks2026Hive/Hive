@@ -6,7 +6,7 @@ import onnx
 from onnx import helper, TensorProto
 from fastapi.testclient import TestClient
 from backend.marked_python import AnalysisRequest, analyze_marked
-from backend.wgsl_analysis import WGSLAnalysisRequest, analyze_wgsl
+from backend.wgsl_analyzer import WGSLAnalysisRequest, analyze_wgsl
 from backend.models import TypedArray
 from backend.pool.workloads import WGSLRequest, PythonRequest, AnimationRequest, OnnxRequest, OnnxAnalysisRequest, onnx_plan
 from backend.pool.coordinator import Coordinator
