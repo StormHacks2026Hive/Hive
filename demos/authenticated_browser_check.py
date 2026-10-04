@@ -8,6 +8,7 @@ correctness check, not a scaling benchmark.
 
 import base64
 import io
+import json
 import logging
 import os
 import socket
@@ -209,8 +210,10 @@ def main():
                         values="[1,2,3,4]",
                         filename=None,
                         mark=False,
+                        target='auto',
                     ):
                         alice.get_by_label("Work mode").select_option(mode)
+                        expect(alice.get_by_role('button', name='Analyze', exact=True)).to_be_enabled(timeout=30000)
                         if filename:
                             alice.get_by_role(
                                 "button", name="Upload file", exact=True
@@ -222,10 +225,16 @@ def main():
                                     "buffer": source.encode(),
                                 }
                             )
+                            expect(alice.locator('.source-caption span')).to_have_text(filename)
+                            expect(alice.get_by_role('button', name='Analyze', exact=True)).to_be_enabled(timeout=30000)
                         else:
                             alice.locator("#source-code").fill(source)
+                        expect(alice.locator('#source-code')).to_have_value(source)
                         if mode == "compute":
                             alice.get_by_label("Input values", exact=True).fill(values)
+                            if filename and filename.endswith('.py'):
+                                expect(alice.get_by_role('combobox', name='Python target', exact=True)).to_be_visible()
+                                alice.get_by_role('combobox', name='Python target', exact=True).select_option(target)
                         alice.get_by_role(
                             "button",
                             name="Mark & analyze" if mark else "Analyze",
@@ -271,7 +280,7 @@ def main():
                     )
                     status, data = run_ui(edited)
                     assert struct.unpack("<4d", data) == (3, 5, 7, 9)
-                    expect(alice.get_by_label("Output preview")).to_contain_text(
+                    expect(alice.get_by_label("Output array")).to_contain_text(
                         "[3,5,7,9]", timeout=30000
                     )
                     csrf = (
@@ -361,6 +370,61 @@ def main():
                     assert png.size == (129, 65) and np.array_equal(
                         np.asarray(png).reshape(-1), np.frombuffer(reference, np.uint8)
                     )
+
+                    # Full arrays across multiple chunks, with global-index reads.
+                    array_source = 'def any_function_name(values):\n    return [values[i] + i + 1 for i in range(len(values))]\n'
+                    array_input = json.dumps(list(range(8205)))
+                    expected_array = [i * 2 + 1 for i in range(8205)]
+                    for target, scalar in [('gpu', 'f'), ('cpu', 'd')]:
+                        status, data = run_ui(array_source, values=array_input, filename='array.py', target=target)
+                        assert status['total_chunks'] > 1
+                        assert status['output_format'] == ('f32' if target == 'gpu' else 'f64'), (target, status['output_format'], status['output_shape'], len(data), alice.locator('#source-code').input_value())
+                        assert list(struct.unpack('<' + scalar * 8205, data)) == expected_array
+                        output = alice.get_by_label('Output array', exact=True)
+                        expect(output).to_contain_text('16409]', timeout=30000)
+                        assert json.loads(output.inner_text()) == expected_array
+                    with alice.expect_download() as download:
+                        alice.get_by_role('button', name='Download JSON', exact=True).click()
+                    assert json.loads(Path(download.value.path()).read_text()) == expected_array
+
+                    # The bundled user file has a Python string wrapper and a .wgsl extension.
+                    alice.get_by_role('combobox', name='Example', exact=True).select_option('mandelbulb')
+                    expect(alice.get_by_role('button', name='Analyze', exact=True)).to_be_enabled(timeout=30000)
+                    assert alice.get_by_label('Frames', exact=True).input_value() == '8'
+                    alice.get_by_label('Width', exact=True).fill('129')
+                    alice.get_by_label('Height', exact=True).fill('65')
+                    alice.get_by_label('Frames', exact=True).fill('3')
+                    status, data = run_ui(alice.locator('#source-code').input_value(), mode='animation', filename='Mandelbulb.wgsl')
+                    expect(alice.get_by_role('button', name='Download PNG', exact=True)).to_be_enabled(timeout=30000)
+                    frame_size = 129 * 65 * 4
+                    assert len(data) == frame_size * 3
+                    assert data[:frame_size] != data[frame_size:frame_size * 2]
+                    slider = alice.get_by_label('Animation frame', exact=True)
+                    for index in range(3):
+                        slider.press('Home')
+                        for _ in range(index): slider.press('ArrowRight')
+                        expected_pixels = list(data[index * frame_size:(index + 1) * frame_size])
+                        alice.wait_for_function('(expected) => { const c = document.querySelector(".job-results canvas"); return c && c.getContext("2d").getImageData(0, 0, c.width, c.height).data.every((v, i) => v === expected[i]); }', arg=expected_pixels)
+                    tile_requests = []
+                    listener = lambda req: tile_requests.append(req.url) if '/chunks/' in req.url else None
+                    alice.on('request', listener)
+                    alice.get_by_role('button', name='Play', exact=True).click()
+                    alice.wait_for_timeout(500)
+                    alice.get_by_role('button', name='Pause', exact=True).click()
+                    assert not tile_requests, tile_requests
+                    alice.remove_listener('request', listener)
+
+                    # Selectable ONNX preset includes a compatible input and batch shape.
+                    alice.get_by_role('combobox', name='Example', exact=True).select_option('onnx')
+                    expect(alice.get_by_role('button', name='Analyze', exact=True)).to_be_enabled(timeout=30000)
+                    alice.get_by_role('button', name='Analyze', exact=True).click()
+                    expect(alice.get_by_role('button', name='Send', exact=True)).to_be_enabled(timeout=30000)
+                    with alice.expect_response(lambda r: r.url.split('?')[0].endswith('/pool/jobs') and r.request.method == 'POST') as created:
+                        alice.get_by_role('button', name='Send', exact=True).click()
+                    assert created.value.status == 202, created.value.text()
+                    output = alice.get_by_label('Output array', exact=True)
+                    expect(output).to_contain_text('[14,19,24', timeout=60000)
+                    assert json.loads(output.inner_text()) == [14,19,24,24,33,42,34,47,60,44,61,78]
                     # Controls persist and the remote browser obeys them.
                     csrf = (
                         contexts[0]
@@ -424,7 +488,7 @@ def main():
                     assert not errors, errors
                     browser.close()
                     LOG.info(
-                        "Authenticated UI: network create/join, GPU, CPU-only fallback, editable markers, CPU sum, raw WGSL, two Mandelbulb frames, reference pixels, PNG, node controls and persisted stop: passed"
+                        "Authenticated UI: GPU/CPU arrays with 8205 ordered values, JSON, Mandelbulb preset, every frame on canvas, cached playback, ONNX preset, node controls: passed"
                     )
             finally:
                 server.terminate()

@@ -99,13 +99,30 @@ the oldest finished, failed or cancelled results without a live subscription or
 lease are reclaimed early. Active jobs are protected; the byte budget includes
 assembled outputs and per-chunk result copies. Download results you want to keep.
 
-GPU shares use a warmed Mandelbrot probe: the median of five timed 4096-pixel
-tiles, including dispatch and readback. The score is pixels per second, with an
-8% bonus for a most-common GPU family represented by at least two active nodes,
-then normalized over the network. Expand Device specs to compare probe timings.
-This is a workload proxy, not GPU utilization or a hardware-model ranking. CPU
-shares use a separate single-worker integer benchmark. GPU work still needs CPU
-time for dispatch, buffer copies, networking and displaying results.
+GPU shares mainly use device-spec estimates: laptop and desktop classes start
+above phones and tablets. Exposed Apple Pro/Max/Ultra model tiers and bounded
+core/memory reports adjust the estimate. A warmed Mandelbrot probe adjusts it by
+at most ±10%, and the existing most-common GPU-family bonus remains capped at 8%.
+These are allocation heuristics, not measurements of GPU utilization or exact
+hardware speed; browsers often hide the model, compute units and VRAM. Buffer
+limits only determine which tasks a device can run. Expand Device specs to see
+the reports and probe timing. CPU shares still use the single-worker integer
+benchmark. GPU tasks also use CPU time for dispatch, copies, networking and UI.
+
+The **Example** selector includes array loops, your packaged `Mandelbulb.wgsl`,
+Mandelbrot animation and an ONNX dense layer with compatible input and shape.
+Switching to Animation or ONNX also loads a suitable default. The Mandelbulb file
+contains a Python literal shader wrapper; both that form and raw WGSL are accepted.
+Completed animations load every frame once, then play/seek locally without
+refetching tiles. They autoplay unless reduced motion is enabled.
+
+**Python target** selects Auto (respects comments), GPU or CPU. Explicit GPU/CPU
+overrides marker targets. Function names are unrestricted; independent indexed
+loops, append maps and unfiltered array comprehensions support GPU conversion.
+Numeric +, -, *, /, powers, abs/min/max and conditional expressions are supported;
+unknown calls and cross-element dependencies are refused. CPU mode also chunks
+supported maps and reductions. Numeric results show every output entry in original
+order, with a complete JSON download alongside the binary output.
 
 ## Limits
 
@@ -118,8 +135,8 @@ Browser CPU work uses a bounded numeric interpreter lowered from the CPU analyze
 It does not require Ray on phones or laptops. The separate local Python CPU API
 uses Ray. Browser CPU results use float64 and bounded numbers; unsupported Python
 integer/bit operations and call signatures are rejected. Floating reductions can
-change rounding. Scheduling uses throughput benchmarks with at most an 8% bonus
-for the most common GPU family, not a hardcoded laptop/phone preference.
+change rounding. Device-spec GPU weights are estimates and may not predict a
+particular shader's speed. CPU core counts do not multiply the one-worker CPU score.
 
 ## Checks
 

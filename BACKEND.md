@@ -17,8 +17,9 @@ are never sent to Ray or executed by the server.
 
 Scores are workload proxies. GPU ALU/bandwidth scores should rank GPU workloads;
 CPU single-thread/core scores should rank CPU workloads. They are not measured
-application speedups. Browser reservations use the existing Mandelbrot throughput
-probe, with replanning when workers disconnect or pause. Legacy registration accepts
+application speedups. Browser GPU reservations now mainly use device-spec
+estimates, with bounded Mandelbrot-probe adjustments and replanning when workers
+disconnect or pause. Legacy registration accepts
 `compute_score`; unmeasured workers fall back to a single-node plan with a warning
 rather than an assumed equal split. Fixed-size browser chunks
 are transport units; reservations determine weighted node shares.
@@ -69,7 +70,7 @@ RenderConfig defaults; the script's 300-frame rotation loop is not executed.
 with AST, packs the original uniform layout, and adds global pixel offsets with
 local texture writes. `node-web/gpu.js` renders storage textures, removes GPU row
 padding and sends RGBA tiles over the existing transport. The coordinator uses
-throughput-weighted reservations and stitches tiles. The image route accepts
+spec-weighted reservations and stitches tiles. The image route accepts
 formatting/comments and config changes; arbitrary altered texture shaders are
 rejected. Render-time cost probing is not part of this upload route.
 
@@ -154,7 +155,7 @@ select targets. The existing WGSL compiler remains the GPU execution path.
 for browser Web Workers; numeric CPU results use float64. Ray remains available
 through the local Python API and is not required by browser contributors.
 
-The coordinator partitions by measured CPU/GPU throughput, excludes inactive
+The coordinator partitions by measured CPU throughput and estimated GPU specs, excludes inactive
 nodes, and adds at most 8% to the most common GPU family. Network membership
 restricts scheduling, status, results and private assets. SQLite retains device
 capabilities/counters; pause, resume, stop and job cancellation act on real
@@ -173,8 +174,19 @@ status, device buffer/texture limits, logical CPU cores, platform and approximat
 system memory. Expand **Device specs** in the node list to see them. Browsers may
 hide the model or omit/round cores and memory; this is not an inventory of exact
 CPU models or VRAM. Reports persist with the node's capabilities in SQLite.
-GPU limits filter incompatible chunks, including texture dimensions. Scores still
-use measured throughput: buffer capacity is not compute speed, and the CPU path
+GPU limits filter incompatible chunks, including texture dimensions. GPU weights
+use device-class priors, exposed Apple model tiers and bounded host core/RAM hints;
+the probe influences this estimate by at most ±10%. These are estimates, and buffer
+capacity is not compute speed. The CPU path
 uses one Web Worker per node, so reported core counts do not multiply its score.
 Older clients that omit these optional fields remain supported. Reload contributor
 pages after updating to refresh their reports.
+
+`ProgramRequest.target` accepts `auto`, `gpu` and `cpu`; explicit choices override
+CPU/GPU comment targets. GPU conversion accepts independent maps/comprehensions,
+including current-index arithmetic, division and selected numeric builtins.
+CPU indexed comprehensions preserve global indices while chunks carry only local
+input slices. Neither path executes arbitrary Python or claims unsupported code
+can be converted. The user-provided shader wrapper is bundled as a frontend example
+alongside `dense.onnx`. JobResults fetches complete output once, preserves every
+numeric entry, and displays cached animation frames with play/seek controls.

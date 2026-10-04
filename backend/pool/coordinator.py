@@ -212,7 +212,12 @@ class Coordinator:
 
     def weights(self, network_id, cpu=False, normalized=True):
         from collections import Counter
+        from statistics import median
+        from .ranking import gpu_spec_score
         active = [w for w in self.workers.values() if w.network_id == network_id and w.active and w.visible]
+        rates = {w.worker_id: w.capabilities.benchmark.pixels / (w.capabilities.benchmark.elapsed_ms / 1000)
+            for w in active if w.capabilities.webgpu and w.capabilities.benchmark}
+        reference = median(rates.values()) if rates else 1
         def family(w):
             a = w.capabilities.adapter
             return '|'.join((a.vendor, a.architecture, a.device or a.description)).strip('|')
@@ -224,7 +229,9 @@ class Coordinator:
             if cpu:
                 score = caps.cpu_score if caps.cpu else 0
             elif caps.webgpu and caps.benchmark:
-                score = caps.benchmark.pixels / (caps.benchmark.elapsed_ms / 1000)
+                # Specs dominate; probe noise cannot erase the device-class prior.
+                adjustment = max(.9, min(1.1, rates[w.worker_id] / reference))
+                score = gpu_spec_score(caps) * adjustment
                 if family(w) and families[family(w)] == highest and highest > 1:
                     score *= 1.08
             else:
@@ -311,12 +318,11 @@ class Coordinator:
             self.publish_workers()
 
     def rank_pending(self, job):
-        """Reserve pending chunks by measured browser throughput and predicted load.
+        """Reserve chunks by CPU throughput or GPU spec estimates and predicted load.
 
-        Fixed ABI chunks are transport granularity; node shares are weighted by
-        the existing Mandelbrot dispatch/readback probe, not worker count. This
-        is a workload proxy, not an ALU/network microbenchmark. Replan on every
-        pull so paused/offline workers cannot retain reservations.
+        Fixed ABI chunks are transport granularity. GPU device-class and hardware
+        priors dominate the score; the Mandelbrot probe adds a bounded adjustment.
+        Replan on every pull so paused/offline workers cannot retain reservations.
         """
         from ..common.nodes import ComputeNode
         from ..node_ranker import allocate

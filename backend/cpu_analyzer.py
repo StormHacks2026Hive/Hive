@@ -61,6 +61,8 @@ def _pure_expression(node: ast.AST, allowed: set[str], helpers: set[str]) -> lis
     reasons = []
     for part in ast.walk(node):
         if isinstance(part, ast.Call):
+            if isinstance(part.func, ast.Name) and part.func.id in allowed:
+                reasons.append('Iteration variable called as a function: ' + part.func.id)
             if (
                 not isinstance(part.func, ast.Name)
                 or part.func.id not in PURE | helpers
@@ -143,14 +145,17 @@ def analyze(source: str, pure_helpers: set[str] | None = None) -> CPUAnalysis:
         if not isinstance(generator.target, ast.Name):
             return CPUAnalysis(False, ["Comprehension unpacking unsupported"])
         target = generator.target.id
-        reasons = _pure_expression(comp.elt, {target}, helpers) + _pure_expression(
+        reasons = []
+        expr = copy.deepcopy(comp.elt)
+        if ast.unparse(generator.iter) != parameter:
+            expr = _replace_current_reads(expr, parameter, target, reasons)
+        reasons += _pure_expression(expr, {target, 'hive_value'}, helpers) + _pure_expression(
             generator.iter, {parameter}, helpers
         )
         if reasons:
             return CPUAnalysis(False, reasons)
-        generated = (
-            f"def hive_iteration({target}):\n    return {ast.unparse(comp.elt)}\n"
-        )
+        args = target + ', hive_value' if any(isinstance(n, ast.Name) and n.id == 'hive_value' for n in ast.walk(expr)) else target
+        generated = f"def hive_iteration({args}):\n    return {ast.unparse(expr)}\n"
         return CPUAnalysis(
             True,
             [],

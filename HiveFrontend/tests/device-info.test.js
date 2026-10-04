@@ -4,7 +4,15 @@ import { readFile } from 'node:fs/promises'
 import { nodeSpecs } from '../src/nodeSpecs.js'
 
 const source = await readFile(new URL('../../node-web/device-info.js', import.meta.url), 'utf8')
-const { hardwareInfo } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+const { deviceType, hardwareInfo } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`)
+
+test('mobile reports classify phones separately from laptops and tablets', () => {
+  assert.equal(deviceType({userAgent:'Mozilla Macintosh', maxTouchPoints:0}), 'laptop')
+  assert.equal(deviceType({userAgent:'Mozilla Macintosh', maxTouchPoints:5}), 'tablet')
+  assert.equal(deviceType({userAgent:'Mozilla Android Mobile'}), 'phone')
+  assert.equal(deviceType({userAgent:'Mozilla Android'}), 'tablet')
+  assert.equal(deviceType({userAgentData:{mobile:true}}), 'phone')
+})
 
 test('browser hardware reports stay optional and do not invent specs', () => {
   assert.deepEqual(hardwareInfo({}), { logical_cores: null, memory_gib: null, platform: '' })

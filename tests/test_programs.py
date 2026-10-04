@@ -46,8 +46,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 }"""
 
 
-def test_hardware_capacity_filters_tiles_without_inventing_throughput():
-    """Large core/RAM reports must not inflate a single worker's measured score."""
+def test_gpu_specs_influence_estimates_but_cpu_stays_single_worker():
     coordinator = Coordinator()
     workers = []
     for cores, memory, texture_limit in [(4, 4, 8192), (32, 64, 64)]:
@@ -55,13 +54,81 @@ def test_hardware_capacity_filters_tiles_without_inventing_throughput():
         caps['hardware'] = {'logical_cores': cores, 'memory_gib': memory}
         caps['limits'] = dict(CAPABILITIES['limits'], maxTextureDimension2D=texture_limit)
         workers.append(coordinator.register(Socket(), Register(type='register', label='test', capabilities=caps)))
-    assert list(coordinator.weights(None).values()) == [0.5, 0.5]
+    assert coordinator.weights(None)[workers[1].worker_id] > coordinator.weights(None)[workers[0].worker_id]
     assert list(coordinator.weights(None, cpu=True).values()) == [0.5, 0.5]
     tile = Chunk('tile', Tile(x=0, y=0, width=128, height=64), assignment={'kind': 'texture_tile'}, byte_length=32768)
     assert coordinator.compatible(workers[0], tile)
     assert not coordinator.compatible(workers[1], tile)
     old = Register(type='register', label='old', capabilities=CAPABILITIES)
     assert old.capabilities.hardware.logical_cores is None
+
+
+def test_laptop_gpu_share_beats_phone_even_with_noisy_faster_phone_probe(pool):
+    workers = []
+    for kind, elapsed in [('phone', .01), ('laptop', 10)]:
+        caps = dict(CAPABILITIES, device_type=kind)
+        caps['benchmark'] = dict(CAPABILITIES['benchmark'], elapsed_ms=elapsed)
+        workers.append(pool.register(Socket(), Register(type='register', label=kind, network_id='network', capabilities=caps)))
+    phone, laptop = workers
+    weights = pool.weights('network')
+    assert weights[laptop.worker_id] > weights[phone.worker_id]
+    parts = pool.partitions(8205, 'network')
+    assert sum(n for _, n, owner in parts if owner == laptop.worker_id) > sum(n for _, n, owner in parts if owner == phone.worker_id)
+    assert sum(n for _, n, _ in parts) == 8205
+    assert all(n <= 4096 for _, n, _ in parts)
+    assert [offset for offset, _, _ in parts] == [sum(n for _, n, _ in parts[:i]) for i in range(len(parts))]
+    laptop.active = False
+    assert pool.weights('network') == {phone.worker_id: 1.0}
+
+
+def test_reported_apple_pro_tier_has_higher_gpu_allocation(pool):
+    workers = []
+    for name in ['Apple M1', 'Apple M1 Pro']:
+        caps = dict(CAPABILITIES, device_type='laptop', adapter={'vendor':'apple', 'description':name})
+        workers.append(pool.register(Socket(), Register(type='register', label=name, network_id='network', capabilities=caps)))
+    weights = pool.weights('network')
+    assert weights[workers[1].worker_id] > weights[workers[0].worker_id]
+
+
+@pytest.mark.parametrize('source', [
+    PYTHON.replace('transform', 'arbitrary_function_name'),
+    'def other_name(values):\n    return [abs(v) / 2 for v in values]\n',
+    'def offset_map(values):\n    return [values[i] + i for i in range(len(values))]\n',
+])
+def test_explicit_gpu_and_cpu_targets_preserve_full_chunked_array(source, pool):
+    values = TypedArray.encode(range(100))
+    for target in ('gpu', 'cpu'):
+        report, plans = inspect_program(ProgramRequest(source=source, input=values, target=target, chunk_size=16), 'network')
+        assert report['status'] == 'ready', report
+        assert report['segments'][0]['target'] == target
+        plan = plans[0][2]
+        assert plan['output_shape'] == [100]
+        assert sum(c['count'] for c in plan['chunks']) == 100
+        assert len(plan['chunks']) > 1
+        assert all(c['count'] <= 16 for c in plan['chunks'])
+        if target == 'gpu': assert report['segments'][0]['wgsl']
+
+
+def test_packaged_mandelbulb_with_python_wrapper_and_wgsl_extension_animates(pool):
+    source = (ROOT / 'HiveFrontend/public/examples/Mandelbulb.wgsl').read_text()
+    report, plans = inspect_program(ProgramRequest(source=source, filename='Mandelbulb.wgsl', mode='animation', frames=3, width=129, height=65), 'network')
+    assert report['status'] == 'ready', report
+    _, request, plan = plans[0]
+    assert plan['output_shape'] == [3, 65, 129, 4]
+    assert len({chunk['assignment']['uniform_data'] for chunk in plan['chunks']}) == 3
+    job = pool.create(request, plan=plan, network_id='network')
+    assert pool.status(job).frame_count == 3
+
+
+@pytest.mark.parametrize('source', [
+    'def f(values):\n    return [values[i-1] for i in range(len(values))]\n',
+    'def f(values):\n    return [unknown(v) for v in values]\n',
+    'def f(values):\n    return [abs(abs) for abs in values]\n',
+])
+def test_array_conversion_does_not_claim_unsupported_python_works(source, pool):
+    for target in ('gpu', 'cpu'):
+        report, _ = inspect_program(ProgramRequest(source=source, input=TypedArray.encode([1,2,3]), target=target), 'network')
+        assert report['status'] == 'unsupported'
 
 
 
@@ -99,13 +166,13 @@ def test_mark_edit_targets_and_weighted_allocations(pool):
     assert report["status"] == "ready"
     assert "# hive:gpu begin" in report["marked_source"]
     shares = report["segments"][0]["allocations"]
-    assert shares == {fast.worker_id: 12, slow.worker_id: 4}
+    assert shares[fast.worker_id] > shares[slow.worker_id] and sum(shares.values()) == 16
     edited = report["marked_source"].replace("hive:gpu", "hive:cpu")
     cpu, plans = inspect_program(
         ProgramRequest(source=edited, input=values, segmentation="manual"), "network"
     )
     assert cpu["status"] == "ready" and cpu["segments"][0]["target"] == "cpu"
-    assert cpu["segments"][0]["allocations"] == shares
+    assert cpu["segments"][0]["allocations"] == {fast.worker_id: 12, slow.worker_id: 4}
     assert plans[0][2]["output_format"] == "f64"
     pool.disconnect(slow.worker_id)
     assert sum(n for _, n, _ in pool.partitions(16, "network")) == 16

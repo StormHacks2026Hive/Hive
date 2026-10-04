@@ -19,7 +19,7 @@ from . import database as db
 from .browser_cpu import lower as lower_cpu
 from .browser_cpu import plan as cpu_plan
 from .compiler import compile_source
-from .marked_python import convert_loop
+from .marked_python import convert_comprehension, convert_loop
 from .models import Model, TypedArray
 from .networks import access
 from .pool import routes as pool_routes
@@ -43,6 +43,7 @@ class ProgramRequest(Model):
     filename: str = Field(default="program.py", max_length=128)
     mode: Literal["compute", "animation"] = "compute"
     segmentation: Literal["auto", "manual"] = "auto"
+    target: Literal["auto", "gpu", "cpu"] = "auto"
     mark: bool = False
     input: TypedArray | None = None
     count: int = Field(default=8192, ge=1, le=2_000_000)
@@ -285,7 +286,7 @@ def inspect_program(
             len(frames) * math.ceil(request.width / 64) * math.ceil(request.height / 64)
         )
         plans.append((segments[-1], payload, None))
-    elif request.filename.lower().endswith(".wgsl"):
+    elif request.filename.lower().endswith(".wgsl") and not re.search(r'\bWGSL_SHADER\s*=', request.source):
         shader_segment(
             request.source, 1, len(request.source.splitlines()), request.filename
         )
@@ -338,12 +339,10 @@ def inspect_program(
                     continue
                 gpu, gpu_error = None, None
                 try:
-                    if not isinstance(loop, ast.For):
-                        raise ValueError("Use CPU for this comprehension")
-                    gpu = convert_loop(fn, loop)
+                    gpu = convert_loop(fn, loop) if isinstance(loop, ast.For) else convert_comprehension(fn, loop)
                 except (ValueError, OverflowError, RecursionError) as exc:
                     gpu_error = str(exc)
-                target = covering[0][1] if covering else "gpu" if gpu else "cpu"
+                target = request.target if request.target != 'auto' else covering[0][1] if covering else "gpu" if gpu else "cpu"
                 if covering:
                     marker_index = covering[0][0]
                     start, end, _ = markers[marker_index]

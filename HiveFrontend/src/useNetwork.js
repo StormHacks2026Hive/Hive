@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from './api.js'
+import { deviceType } from '../../node-web/device-info.js'
 
 function deviceKey() {
   try {
@@ -7,11 +8,6 @@ function deviceKey() {
     localStorage.setItem('hive.device', key)
     return key
   } catch { return crypto.randomUUID() }
-}
-function deviceType() {
-  if (/iPad|Tablet/i.test(navigator.userAgent) || /Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1) return 'tablet'
-  if (/Mobi|Android|iPhone/i.test(navigator.userAgent)) return 'phone'
-  return 'laptop'
 }
 export default function useNetwork(user, initialNetwork) {
   const [network, setNetwork] = useState(null), [knownNetworks, setKnownNetworks] = useState([])
@@ -78,11 +74,11 @@ export default function useNetwork(user, initialNetwork) {
       }
       current.onerror = e => { starting = false; setError(e.message || 'Worker failed'); current.terminate(); worker.current = null }
       current.postMessage({ type: 'start', url: url.href, label: enrolled.label, node_id: enrolled.id, network_id: network.id,
-        visible: document.visibilityState === 'visible', mode, device_type: deviceType() })
+        visible: document.visibilityState === 'visible', mode, device_type: deviceType(navigator) })
       lock()
     }
     function visibility() { worker.current?.postMessage({ type: 'visibility', visible: document.visibilityState === 'visible' }); if (document.visibilityState === 'visible') lock(); else wake?.release().catch(() => {}) }
-    api(`/api/networks/${network.id}/nodes`, { device_key: device, label: `${user.name.split(' ')[0]}'s ${deviceType()}` }).then(node => {
+    api(`/api/networks/${network.id}/nodes`, { device_key: device, label: `${user.name.split(' ')[0]}'s ${deviceType(navigator)}` }).then(node => {
       if (closed || generation.current !== version) return
       enrolled = node; setOwnId(node.id)
       if (node.mode !== 'off') start(node.mode)

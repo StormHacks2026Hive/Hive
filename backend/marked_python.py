@@ -3,6 +3,7 @@
 Comments select extraction, never execution of the surrounding Python program.
 """
 import ast
+import copy
 import io
 import math
 import tokenize
@@ -67,15 +68,36 @@ def convert_loop(fn, loop):
                 return 'values[i]'
             if n.id in locals_map:
                 return locals_map[n.id]
+            if indexed and n.id == index:
+                return 'f32(offset + i)'
         if indexed and isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name) and n.value.id == input_name and isinstance(n.slice, ast.Name) and n.slice.id == index:
             return 'values[i]'
-        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult)):
-            op = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*'}[type(n.op)]
+        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+            op = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/'}[type(n.op)]
             return f'({expression(n.left)} {op} {expression(n.right)})'
+        if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Pow):
+            return f'pow({expression(n.left)}, {expression(n.right)})'
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and not n.keywords:
+            if n.func.id in {input_name, index, *locals_map}:
+                raise ValueError('Iteration variable cannot be called as a function')
+            args = [expression(a) for a in n.args]
+            if n.func.id == 'abs' and len(args) == 1:
+                return f'abs({args[0]})'
+            if n.func.id == 'pow' and len(args) == 2:
+                return f'pow({args[0]}, {args[1]})'
+            if n.func.id in ('min', 'max') and 2 <= len(args) <= 8:
+                result = args[0]
+                for arg in args[1:]: result = f'{n.func.id}({result}, {arg})'
+                return result
+        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq):
+            op = {ast.Lt:'<', ast.LtE:'<=', ast.Gt:'>', ast.GtE:'>=', ast.Eq:'==', ast.NotEq:'!='}[type(n.ops[0])]
+            return f'({expression(n.left)} {op} {expression(n.comparators[0])})'
+        if isinstance(n, ast.IfExp):
+            return f'({expression(n.body)} if {expression(n.test)} else {expression(n.orelse)})'
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.UAdd, ast.USub)):
             value = expression(n.operand)
             return value if isinstance(n.op, ast.UAdd) else f'(-{value})'
-        raise ValueError('Only current-element reads, finite constants, iteration-local variables, and + - * are supported; dependencies and calls are rejected')
+        raise ValueError('Use current-element reads, numeric arithmetic, abs/min/max/pow and iteration-local variables; cross-element dependencies and unknown calls need manual conversion')
 
     for stmt in loop.body:
         if output_name is not None:
@@ -84,9 +106,8 @@ def convert_loop(fn, loop):
             target = stmt.targets[0]
             expr = expression(stmt.value)
             if isinstance(target, ast.Name) and target.id not in (input_name, index):
-                if target.id in locals_map:
-                    raise ValueError('Assign each iteration-local variable once')
-                locals_map[target.id] = f'local{len(locals_map)}'
+                if target.id not in locals_map:
+                    locals_map[target.id] = f'local{len(locals_map)}'
                 body.append(f'{locals_map[target.id]} = {expr}')
                 continue
             if indexed and isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name) and isinstance(target.slice, ast.Name) and target.slice.id == index:
@@ -117,6 +138,31 @@ def convert_loop(fn, loop):
     kernel = 'def transform(offset: u32, count: u32, values: Array[f32], result: Array[f32]):\n    i = global_id()\n    if i < count:\n' + ''.join(f'        {s}\n' for s in body)
     compile_source(kernel)
     return Candidate(line=loop.lineno, end_line=loop.end_lineno, input_name=input_name, output_name=output_name, pattern='indexed array' if indexed else 'append map', kernel=kernel)
+
+
+def convert_comprehension(fn, statement):
+    comp = statement.value
+    if not isinstance(comp, ast.ListComp) or len(comp.generators) != 1:
+        raise ValueError('Use one independent array comprehension')
+    generator = comp.generators[0]
+    if generator.ifs or generator.is_async or not isinstance(generator.target, ast.Name):
+        raise ValueError('Filtered, async or unpacking comprehensions need manual conversion')
+    output = 'hive_comprehension_output'
+    if any(isinstance(n, ast.Name) and n.id == output for n in ast.walk(fn)):
+        raise ValueError('Reserved comprehension output name is already in use')
+    indexed = isinstance(generator.iter, ast.Call)
+    if indexed and not generator.iter.args:
+        raise ValueError('Indexed comprehension requires range(len(input))')
+    init_value = ast.BinOp(ast.List([ast.Constant(0.0)], ast.Load()), ast.Mult(), copy.deepcopy(generator.iter.args[0])) if indexed else ast.List([], ast.Load())
+    init = ast.Assign([ast.Name(output, ast.Store())], init_value)
+    write = ast.Assign([ast.Subscript(ast.Name(output, ast.Load()), copy.deepcopy(generator.target), ast.Store())], copy.deepcopy(comp.elt)) if indexed else ast.Expr(ast.Call(ast.Attribute(ast.Name(output, ast.Load()), 'append', ast.Load()), [copy.deepcopy(comp.elt)], []))
+    loop = ast.For(copy.deepcopy(generator.target), copy.deepcopy(generator.iter), [write], [])
+    ast.copy_location(loop, statement)
+    surrogate = copy.copy(fn)
+    surrogate.body = [init, loop]
+    ast.fix_missing_locations(surrogate)
+    candidate = convert_loop(surrogate, loop)
+    return candidate.model_copy(update={'line':statement.lineno, 'end_line':statement.end_lineno, 'pattern':'array comprehension'})
 
 
 def analyze_marked(request: AnalysisRequest):
