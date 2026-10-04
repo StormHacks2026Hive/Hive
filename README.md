@@ -13,6 +13,8 @@ Shared computing power, straight from your browser. Bring laptops, phones, and t
 
 **Website:** [hivehacks.tech](https://hivehacks.tech)
 
+**Design:** [Figma Design](https://www.figma.com/design/cId1aiVpk7prtHzWrRqHMy/HIVE-Design?node-id=0-1&t=GUo3J9geh1mnxujW-1)
+
 ---
 
 ## Table of Contents
