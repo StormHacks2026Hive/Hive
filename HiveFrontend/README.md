@@ -21,6 +21,13 @@ can be stored in `GOOGLE_CLIENT_SECRET`; never prefix secrets with `VITE_`.
 Authorize your actual frontend origin in Google Cloud, including the HTTPS tunnel
 origin when using Cloudflare. Set `COOKIE_SECURE=true` for HTTPS deployments.
 
+On Render, set `HIVE_DB_PATH=/var/data/hive.sqlite3` only after attaching a
+persistent disk mounted at `/var/data`. Without that disk (including free
+instances), leave `HIVE_DB_PATH` unset or use `data/hive.sqlite3`. Local storage
+is writable but ephemeral: accounts, networks and sessions disappear on
+redeploy/restart. `Permission denied: '/var/data'` in sign-in logs means the disk
+is absent or its mount path does not match the configured database path.
+
 For development, in a second terminal:
 
 ```sh

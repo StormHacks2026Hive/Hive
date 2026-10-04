@@ -1,4 +1,18 @@
 let googleScript
+let initializedGoogle, initializedClient, credentialHandler
+
+export function subscribeGoogleSignIn(google, clientId, callback) {
+  // GIS has one global callback. Remounts replace the subscriber, not the SDK.
+  credentialHandler = callback
+  if (initializedGoogle !== google || initializedClient !== clientId) {
+    google.initialize({ client_id: clientId, auto_select: false,
+      callback: credential => credentialHandler?.(credential) })
+    initializedGoogle = google
+    initializedClient = clientId
+  }
+  return () => { if (credentialHandler === callback) credentialHandler = undefined }
+}
+
 export function loadGoogle() {
   if (window.google?.accounts?.id) return Promise.resolve(window.google.accounts.id)
   if (!googleScript) {

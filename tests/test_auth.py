@@ -1,5 +1,6 @@
 """Exercise real token verification with local signing keys; no Google network calls."""
 import time
+import sqlite3
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -127,6 +128,19 @@ def test_missing_config_and_google_unavailable(identity, monkeypatch):
     monkeypatch.setattr(auth.id_token, '_fetch_certs', unavailable)
     assert client.post('/auth/google', json={'credential': credential}, headers=headers).status_code == 503
     assert not auth.sessions
+
+
+@pytest.mark.parametrize('failure', [PermissionError('storage is not writable'), sqlite3.OperationalError('unable to open database file')])
+def test_login_storage_failure_has_actionable_response_and_no_memory_session(identity, monkeypatch, failure):
+    client, token = identity
+    def unavailable(*args):
+        raise failure
+    monkeypatch.setattr(auth.database, 'save_session', unavailable)
+    response = client.post('/auth/google', json={'credential': token()}, headers=csrf_headers(client))
+    assert response.status_code == 503
+    assert 'database storage' in response.json()['detail']
+    assert not auth.sessions
+    assert auth.SESSION_COOKIE not in response.cookies
 
 
 def test_guest_without_google_refresh_restart_and_logout(identity, monkeypatch):

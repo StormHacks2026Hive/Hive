@@ -6,7 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError, TypeAdapter
@@ -39,6 +39,16 @@ async def lifespan(app):
         await pool_task
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware('http')
+async def google_popup_policy(request: Request, call_next):
+    """Keep Google sign-in popups able to communicate with their opener."""
+    response = await call_next(request)
+    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin-allow-popups'
+    return response
+
+
 app.include_router(pool_router)
 app.include_router(auth_router)
 app.include_router(network_router)

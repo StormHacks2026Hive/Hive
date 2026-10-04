@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadGoogle } from '../auth.js'
+import { loadGoogle, subscribeGoogleSignIn } from '../auth.js'
 import { api } from '../api.js'
 
 export default function GoogleSignIn({ clientId, onSignIn, onError }) {
@@ -9,26 +9,23 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
   useEffect(() => {
     let active = true
     let resizeObserver
+    let unsubscribe
     const container = button.current
     loadGoogle()
       .then((google) => {
         if (!active) return
-        google.initialize({
-          client_id: clientId,
-          auto_select: false,
-          callback: async ({ credential }) => {
-            if (!active) return
-            onError('')
-            try {
-              setBusy(true)
-              const { user } = await api('/auth/google', { credential })
-              if (active) onSignIn(user)
-            } catch (err) {
-              if (active) onError(err.message)
-            } finally {
-              if (active) setBusy(false)
-            }
-          },
+        unsubscribe = subscribeGoogleSignIn(google, clientId, async ({ credential }) => {
+          if (!active) return
+          onError('')
+          try {
+            setBusy(true)
+            const { user } = await api('/auth/google', { credential })
+            if (active) onSignIn(user)
+          } catch (err) {
+            if (active) onError(err.message)
+          } finally {
+            if (active) setBusy(false)
+          }
         })
         let lastWidth = 0
         const renderButton = () => {
@@ -58,6 +55,7 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
       })
     return () => {
       active = false
+      unsubscribe?.()
       resizeObserver?.disconnect()
       container.replaceChildren()
     }

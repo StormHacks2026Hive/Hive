@@ -1,6 +1,8 @@
 """Google and guest sign-in with short-lived, SQLite-backed sessions."""
 import os
+import logging
 import secrets
+import sqlite3
 import time
 from functools import partial
 from threading import Lock
@@ -18,6 +20,7 @@ CSRF_COOKIE = 'hive_csrf'
 SESSION_SECONDS = 3600
 sessions = {}
 sessions_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 class GoogleLogin(BaseModel):
@@ -86,11 +89,16 @@ def start_session(user, request, response):
         previous = request.cookies.get(SESSION_COOKIE)
         if len(sessions) >= 1024 and previous not in sessions:
             raise HTTPException(429, 'Sign-in is busy. Please try again later.')
-        sessions.pop(previous, None)
-        database.remove_session(previous)
         session = secrets.token_urlsafe(32)
-        sessions[session] = (user, time.time() + SESSION_SECONDS)
-        database.save_session(session, user, time.time() + SESSION_SECONDS)
+        expires = time.time() + SESSION_SECONDS
+        try:
+            database.save_session(session, user, expires)
+            database.remove_session(previous)
+        except (OSError, sqlite3.Error) as exc:
+            logger.exception('Cannot persist sign-in session; check HIVE_DB_PATH and database storage permissions')
+            raise HTTPException(503, 'Hive could not save your session. The server administrator needs to check database storage.') from exc
+        sessions.pop(previous, None)
+        sessions[session] = (user, expires)
     response.headers['Cache-Control'] = 'no-store'
     response.set_cookie(SESSION_COOKIE, session, max_age=SESSION_SECONDS, **cookie_options())
     return {'user': user}
