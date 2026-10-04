@@ -6,6 +6,15 @@ function memoryStorage() {
   return {getItem:key=>values.get(key)??null,setItem:(key,value)=>values.set(key,value),removeItem:key=>values.delete(key)}
 }
 const user = {id:'user-1',name:'Test User',email:'test@example.com'}
+test('guest view preferences survive refresh without a made-up email',()=>{
+ const storage=memoryStorage()
+ const guest={id:'guest:123',name:'Guest',email:''}
+ saveSession(guest,{network:{id:'HIVE-GUEST'},tab:'mapping'},storage)
+ assert.deepEqual(loadSession(storage).user,guest)
+ assert.equal(loadSession(storage).workspace.network.id,'HIVE-GUEST')
+ saveSession({...user,email:''},null,storage)
+ assert.equal(loadSession(storage),null)
+})
 test('restore preferences without persisting secrets or simulated network data',()=>{
   const storage=memoryStorage()
   saveSession({...user,credential:'secret-token'}, {network:{id:'HIVE-TEST',password:'secret-password'},tab:'compute',nodes:[{id:'fake'}],events:[{message:'fake'}],positions:{node:{x:400,y:300}},mapView:{selectedId:'node',filter:'online',zoom:1.2}},storage)

@@ -18,7 +18,8 @@ function workspaceState(value) {
 export function loadSession(storage) {
   try {
     const saved = JSON.parse((storage ?? globalThis.localStorage).getItem(SESSION_KEY))
-    if (saved?.version !== 2 || !text(saved.user?.id) || !text(saved.user?.name) || !text(saved.user?.email)) return null
+    if (saved?.version !== 2 || !text(saved.user?.id) || !text(saved.user?.name) ||
+      !(text(saved.user?.email) || saved.user.id.startsWith('guest:') && saved.user.email === '')) return null
     const { id, name, email } = saved.user
     return { user: { id, name, email }, workspace: workspaceState(saved.workspace) }
   } catch { return null }

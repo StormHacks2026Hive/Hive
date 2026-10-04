@@ -93,7 +93,7 @@ def test_reject_forged_signature(identity):
     assert not auth.sessions
 
 
-@pytest.mark.parametrize('path', ['/auth/google', '/auth/logout'])
+@pytest.mark.parametrize('path', ['/auth/google', '/auth/guest', '/auth/logout'])
 def test_csrf_required(identity, path):
     client, token = identity
     payload = {'credential': token()} if path.endswith('google') else None
@@ -127,3 +127,40 @@ def test_missing_config_and_google_unavailable(identity, monkeypatch):
     monkeypatch.setattr(auth.id_token, '_fetch_certs', unavailable)
     assert client.post('/auth/google', json={'credential': credential}, headers=headers).status_code == 503
     assert not auth.sessions
+
+
+def test_guest_without_google_refresh_restart_and_logout(identity, monkeypatch):
+    client, _ = identity
+    monkeypatch.setenv('GOOGLE_CLIENT_ID', '')
+    headers = csrf_headers(client)
+    response = client.post('/auth/guest', json={}, headers=headers)
+    assert response.status_code == 200
+    user = response.json()['user']
+    assert user['id'].startswith('guest:')
+    assert user['name'] == 'Guest' and user['email'] == ''
+    assert 'HttpOnly' in response.headers['set-cookie']
+    assert response.headers['cache-control'] == 'no-store'
+    token = client.cookies.get(auth.SESSION_COOKIE)
+    auth.sessions.clear()  # Recover the same guest from SQLite after a restart.
+    assert client.get('/auth/me').json()['user'] == user
+    assert client.post('/auth/guest', json={}, headers=headers).json()['user'] == user
+    assert client.cookies.get(auth.SESSION_COOKIE) == token
+    assert client.post('/auth/logout', headers=headers).status_code == 200
+    assert client.get('/auth/me').json()['user'] is None
+    replacement = client.post('/auth/guest', json={}, headers=headers).json()['user']
+    assert replacement['id'] != user['id']
+
+
+def test_guest_button_does_not_replace_google_account(identity):
+    client, token = identity
+    headers = csrf_headers(client)
+    user = client.post('/auth/google', json={'credential': token()}, headers=headers).json()['user']
+    assert client.post('/auth/guest', json={}, headers=headers).json()['user'] == user
+
+
+def test_guest_session_expires(identity, monkeypatch):
+    client, _ = identity
+    client.post('/auth/guest', json={}, headers=csrf_headers(client))
+    now = time.time()
+    monkeypatch.setattr(auth.time, 'time', lambda: now + auth.SESSION_SECONDS + 1)
+    assert client.get('/auth/me').json()['user'] is None

@@ -1,4 +1,4 @@
-"""Google sign-in and short-lived, SQLite-backed sessions for the frontend."""
+"""Google and guest sign-in with short-lived, SQLite-backed sessions."""
 import os
 import secrets
 import time
@@ -76,6 +76,11 @@ def google_login(payload: GoogleLogin, request: Request, response: Response):
     except (ValueError, GoogleAuthError, KeyError) as exc:
         raise HTTPException(401, 'Google could not verify this account. Please try again.') from exc
 
+    return start_session(user, request, response)
+
+
+def start_session(user, request, response):
+    """Issue the same protected session for Google accounts and guests."""
     with sessions_lock:
         prune_sessions()
         previous = request.cookies.get(SESSION_COOKIE)
@@ -89,6 +94,17 @@ def google_login(payload: GoogleLogin, request: Request, response: Response):
     response.headers['Cache-Control'] = 'no-store'
     response.set_cookie(SESSION_COOKIE, session, max_age=SESSION_SECONDS, **cookie_options())
     return {'user': user}
+
+
+@router.post('/guest')
+def guest_login(request: Request, response: Response):
+    require_csrf(request)
+    response.headers['Cache-Control'] = 'no-store'
+    existing = user_for_request(request)
+    if existing:
+        return {'user': existing}
+    user = User(id=f'guest:{secrets.token_hex(16)}', name='Guest', email='')
+    return start_session(user, request, response)
 
 
 @router.get('/me')

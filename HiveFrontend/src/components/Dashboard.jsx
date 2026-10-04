@@ -145,7 +145,7 @@ export default function Dashboard({ user, initialState, onWorkspaceChange, onSig
           <span className="account-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
           <div>
             <strong>{user.name}</strong>
-            <span>{user.email}</span>
+            <span>{user.email || 'Guest session'}</span>
           </div>
           <button
             className="icon-button"

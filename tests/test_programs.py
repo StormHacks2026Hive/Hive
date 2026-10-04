@@ -407,6 +407,32 @@ def test_network_run_results_and_asset_authorization(pool):
         assert pool.pull(next(iter(pool.workers.values()))).type == "no_work"
 
 
+def test_guests_create_join_submit_and_keep_network_isolation(pool):
+    from backend.main import app
+
+    with TestClient(app) as owner, TestClient(app) as peer:
+        headers = {"X-CSRF-Token": owner.get("/auth/config").json()["csrf_token"]}
+        peer_headers = {"X-CSRF-Token": peer.get("/auth/config").json()["csrf_token"]}
+        owner_user = owner.post("/auth/guest", json={}, headers=headers).json()["user"]
+        peer_user = peer.post("/auth/guest", json={}, headers=peer_headers).json()["user"]
+        assert owner_user["id"] != peer_user["id"]
+        network = owner.post("/api/networks", json={"name": "Guest hive", "password": "test-password"}, headers=headers).json()
+        network_id = network["id"]
+        assert peer.get(f"/api/networks/{network_id}").status_code == 403
+        joined = peer.post("/api/networks/join", json={"network_id": network_id, "password": "test-password"}, headers=peer_headers)
+        assert joined.status_code == 200
+        node = owner.post(f"/api/networks/{network_id}/nodes", json={"device_key": "guest-device-123", "label": "Guest laptop"}, headers=headers).json()
+        path = f"/api/networks/{network_id}/nodes/{node['id']}/control"
+        assert peer.post(path, json={"action": "kill"}, headers=peer_headers).status_code == 403
+        submitted = owner.post(f"/api/networks/{network_id}/runs", json={"source": CPU, "filename": "cpu.py", "input": TypedArray.encode([1, 2, 3]).model_dump()}, headers=headers)
+        assert submitted.status_code == 202, submitted.text
+        job_id = submitted.json()["jobs"][0]["job_id"]
+        assert owner.post(f"/pool/jobs/{job_id}/cancel", json={}, headers=headers).json()["status"] == "cancelled"
+        auth.sessions.clear()
+        assert owner.get("/api/networks").json()[0]["id"] == network_id
+        assert owner.get(f"/api/networks/{network_id}").json()["nodes"][0]["id"] == node["id"]
+
+
 def test_popular_gpu_bonus_is_small_and_cpu_scores_are_separate(pool):
     caps = dict(CAPABILITIES, cpu_score=3, adapter={"vendor": "popular"})
     a = pool.register(

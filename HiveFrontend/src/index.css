@@ -71,6 +71,10 @@ a { color: inherit; }
 .signin-area { display: flex; flex-direction: column; align-items: center; width: 100%; }
 .google-button { display: flex; justify-content: center; min-height: 44px; max-width: 100%; }
 .google-button.busy { opacity: .55; pointer-events: none; }
+.guest-signin { margin-top: 14px; padding: 7px 12px; border: 1.5px solid var(--ink); border-radius: 8px; background: #fff0ce; color: var(--ink); font-size: 12px; font-weight: 700; transition: background .2s ease, transform .2s ease; }
+.guest-signin:hover:not(:disabled) { background: #fff8e8; transform: translateY(-1px); }
+.guest-signin:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+.guest-signin:disabled { opacity: .6; cursor: wait; }
 .note { font-size: 11px; color: #735023; margin-top: 12px; line-height: 1.5; text-align: center; }
 .setup-state { font-size: 13px; line-height: 1.6; }
 .error { font-size: 11px; line-height: 1.4; color: #873708; margin-top: 10px; max-width: 250px; }
@@ -285,6 +289,10 @@ a { color: inherit; }
 .node-rate { fill: var(--ink); font-size: 13px; }
 .node-status-text { fill: var(--ink); font-size: 11px; }
 .map-node.sending text, .map-node.paused text { fill: var(--cream); }
+.map-node.peer-node text { fill: var(--cream); }
+.bee-body, .bee-face { transition: fill .5s ease; }
+.map-node.sending .bee-body { fill: var(--honey-dark); }
+.map-node.offline .bee-body, .map-node.offline .bee-face { fill: #d7cbb5; }
 .map-zoom { position: absolute; left: 17px; bottom: 14px; display: flex; align-items: center; border: 2px solid var(--ink); background: var(--honey-light); border-radius: 8px; }
 .map-zoom button { width: 28px; height: 27px; background: transparent; border: 0; color: var(--muted); font-size: 14px; }
 .map-zoom button:nth-child(2) { width: 36px; font-size: 11px; }

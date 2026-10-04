@@ -175,6 +175,29 @@ export function HangingHive() {
   )
 }
 
+// Map peers share the hive's warm colours and simple ink outlines.
+export function BeeBody() {
+  return (
+    <g stroke="#5c421b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <g fill="#fff0ce">
+        <ellipse cx="-28" cy="-63" rx="19" ry="30" transform="rotate(-30 -28 -63)" />
+        <ellipse cx="8" cy="-65" rx="18" ry="28" transform="rotate(24 8 -65)" />
+      </g>
+      <path d="m-57-29-19 9 19 5" fill="#5c421b" />
+      <path d="m-31 4-8 14m29-12-2 14m24-21 6 15" fill="none" />
+      <ellipse className="bee-body" cx="-12" cy="-24" rx="51" ry="34" fill="#eea10a" />
+      <path d="M-39-53q-12 29 0 59l12 3q-12-34 0-65ZM-12-58q-11 34 0 68l12-1q-10-32 0-66Z" fill="#5c421b" stroke="none" />
+      <path d="M-48-39q7-10 15-12" fill="none" stroke="#ffd16a" strokeWidth="4" />
+      <circle className="bee-face" cx="43" cy="-28" r="25" fill="#ffd16a" />
+      <path d="M35-51q-9-15-17-13m29 12q3-17 13-17" fill="none" />
+      <circle cx="18" cy="-64" r="3" fill="#5c421b" />
+      <circle cx="60" cy="-69" r="3" fill="#5c421b" />
+      <circle cx="50" cy="-33" r="3" fill="#5c421b" stroke="none" />
+      <path d="M49-20q6 5 10-1" fill="none" />
+    </g>
+  )
+}
+
 export default function HiveScene() {
   return (
     <svg className="hive-scene" viewBox="0 0 846 486" preserveAspectRatio="none" aria-hidden="true">

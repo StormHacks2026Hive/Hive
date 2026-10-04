@@ -13,6 +13,7 @@ function App() {
   const [clientId, setClientId] = useState('')
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
+  const [guestBusy, setGuestBusy] = useState(false)
   const heading = useRef(null)
   const savingEnabled = useRef(Boolean(saved?.user))
   const transition = useUITransition()
@@ -69,6 +70,16 @@ function App() {
     })
   }
 
+  async function enterGuest() {
+    setGuestBusy(true)
+    setError('')
+    try {
+      const session = await api('/auth/guest', {})
+      enterHive(session.user)
+    } catch (e) { setError(e.message) }
+    finally { setGuestBusy(false) }
+  }
+
   if (stage === 'app') return (
     <Dashboard user={user} initialState={saved?.user.id === user.id ? saved.workspace : null}
       onWorkspaceChange={saveWorkspace} onSignOut={signOut} headingRef={heading} />
@@ -106,6 +117,11 @@ function App() {
                 <br />
                 Come back soon.
               </p>
+            )}
+            {stage === 'login' && (
+              <button className="guest-signin" onClick={enterGuest} disabled={guestBusy}>
+                {guestBusy ? 'Opening…' : 'Continue as guest'}
+              </button>
             )}
             {error && (
               <div className="error" role="alert">

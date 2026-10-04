@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { STATUS, formatData } from '../network.js'
-import { HiveBody, HexIcon, Icon } from './HiveScene.jsx'
+import { BeeBody, HiveBody, HexIcon, Icon } from './HiveScene.jsx'
 
 export default function NodeMap({
   nodes,
@@ -175,7 +175,7 @@ export default function NodeMap({
                       onPointerMove={dragNode}
                       onPointerUp={endDrag}
                       onPointerCancel={endDrag}
-                      className={`map-node ${node.status} ${selectedNode ? 'selected' : ''} ${dimmed ? 'dimmed' : ''} ${draggingId === node.id ? 'dragging' : ''}`}
+                      className={`map-node ${node.own ? 'own-node' : 'peer-node'} ${node.status} ${selectedNode ? 'selected' : ''} ${dimmed ? 'dimmed' : ''} ${draggingId === node.id ? 'dragging' : ''}`}
                       role="button"
                       tabIndex={0}
                       aria-label={`${node.name}${node.own ? ', your node' : ''}, ${STATUS[node.status].label}`}
@@ -206,17 +206,19 @@ export default function NodeMap({
                         className="node-selection-ring"
                         rx="82" ry="87"
                       />
-                      <path className="node-hanger" d="M0-94V-75" />
-                      <g className="node-hive" transform="scale(.39) translate(-200 -232)">
-                        <HiveBody doorRadius={140} shaded={false} />
-                      </g>
-                      <text className="node-name" y="-15" textAnchor="middle">
+                      {node.own ? <>
+                        <path className="node-hanger" d="M0-94V-75" />
+                        <g className="node-hive" transform="scale(.39) translate(-200 -232)">
+                          <HiveBody doorRadius={140} shaded={false} />
+                        </g>
+                      </> : <BeeBody />}
+                      <text className="node-name" y={node.own ? -15 : 40} textAnchor="middle">
                         {node.own ? 'Your node' : node.name}
                       </text>
-                      <text className="node-rate" y="8" textAnchor="middle">
+                      <text className="node-rate" y={node.own ? 8 : 61} textAnchor="middle">
                         {node.completed || 0} chunks
                       </text>
-                      <text className="node-status-text" y="29" textAnchor="middle">
+                      <text className="node-status-text" y={node.own ? 29 : 80} textAnchor="middle">
                         {STATUS[node.status].label}
                       </text>
                     </g>

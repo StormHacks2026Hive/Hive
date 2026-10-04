@@ -48,7 +48,13 @@ Generated `dist/` files are local build artifacts.
 
 ## Use
 
-1. Sign in with Google, create a password-protected network, and share its ID.
+Guests use the same network and compute features with a server-issued session.
+Refresh keeps their identity and saved workspace for the session's one-hour lifetime.
+Signing out or clearing cookies ends access to that guest identity; a new guest
+session cannot recover its previous networks. Google sign-in remains available.
+On the map, your device is the hive and other devices are bees.
+
+1. Sign in with Google or choose **Continue as guest**, create a password-protected network, and share its ID.
 2. Other users sign in and join with that ID and password. Each browser enrolls
    a persistent device and automatically contributes while its tab is visible.
 3. In Compute, upload a `.py` or `.wgsl` file or type code. Supply an input array
