@@ -44,6 +44,10 @@ class Job:
     error: str | None = None
     contributions: dict = field(default_factory=dict)
     finished_at: float | None = None
+    network_id: str | None = None
+    owner_id: str | None = None
+    reduction: str | None = None
+    initial: float | list | None = None
 
 @dataclass
 class Worker:
@@ -57,6 +61,10 @@ class Worker:
     busy: tuple | None = None
     completed: int = 0
     compute_ms: float = 0
+    network_id: str | None = None
+    node_id: str | None = None
+    user_id: str | None = None
+    phase: str = 'idle'
 
 class Coordinator:
     def __init__(self, lease=15, heartbeat_timeout=20, max_attempts=4):
@@ -67,7 +75,7 @@ class Coordinator:
         self.heartbeat_timeout = heartbeat_timeout
         self.max_attempts = max_attempts
 
-    def create(self, request, plan=None):
+    def create(self, request, plan=None, network_id=None, owner_id=None):
         if len(self.jobs) >= 16:
             raise ValueError('16 retained jobs maximum; wait for 30-minute result expiry')
         from .workloads import AnimationRequest, WGSLRequest, PythonRequest, compute_plan, onnx_plan
@@ -96,22 +104,29 @@ class Coordinator:
             chunks=[Chunk(**c) for c in plan['chunks']]
             job=Job(uuid4().hex,request,chunks,bytearray(plan['size']),assets=plan['assets'],output_format='rgba8',output_shape=plan['output_shape'])
         else:
+            if plan is None and network_id and isinstance(request, (WGSLRequest, PythonRequest)):
+                total = len(request.input.decode()) if request.input else request.count
+                plan = compute_plan(request, self.partitions(total, network_id, request.chunk_size))
             plan = plan or (compute_plan(request) if isinstance(request, (WGSLRequest, PythonRequest)) else onnx_plan(request))
             chunks = [Chunk(tile=None, **c) for c in plan['chunks']]
             job = Job(uuid4().hex, request, chunks, bytearray(plan['size']), assets=plan['assets'],
                 output_format=plan['output_format'], output_shape=plan['output_shape'])
         if sum(len(j.image) + sum(len(a) for a in j.assets.values()) for j in self.jobs.values()) + len(job.image) + sum(len(a) for a in job.assets.values()) > 134_217_728:
             raise ValueError('128 MiB retained output/asset capacity reached; wait for result expiry')
+        job.network_id, job.owner_id = network_id, owner_id
+        if plan:
+            job.reduction, job.initial = plan.get('reduction'), plan.get('initial')
         self.jobs[job.job_id] = job
         return job
 
-    def worker_status(self):
+    def worker_status(self, network_id=None):
         return [WorkerStatus(worker_id=w.worker_id, label=w.label,
             state='working' if w.busy else 'idle' if w.active and w.visible else 'paused',
             visible=w.visible, capabilities=w.capabilities, completed_chunks=w.completed,
             compute_ms=w.compute_ms,
-            pixels_per_second=w.completed*4096/(w.compute_ms/1000) if w.compute_ms else 0)
-            for w in self.workers.values()]
+            pixels_per_second=w.completed*4096/(w.compute_ms/1000) if w.compute_ms else 0,
+            node_id=w.node_id, network_id=w.network_id, weight=self.weights(w.network_id).get(w.worker_id, 0))
+            for w in self.workers.values() if w.network_id == network_id]
 
     def status(self, job):
         accepted = [c.accepted for c in job.chunks if c.accepted]
@@ -125,7 +140,7 @@ class Coordinator:
             result_url=f'/pool/jobs/{job.job_id}/result' if job.status=='done' else None)
 
     def snapshot(self, job, kind='job_update'):
-        return Snapshot(type=kind, job=self.status(job), workers=self.worker_status())
+        return Snapshot(type=kind, job=self.status(job), workers=self.worker_status(job.network_id))
 
     def emit(self, job_id, message):
         for queue in self.watchers.get(job_id, set()):
@@ -143,15 +158,63 @@ class Coordinator:
             if job.job_id in self.watchers:
                 self.publish(job)
 
-    def register(self, socket, message):
+    def register(self, socket, message, user_id=None):
         if len(self.workers) >= 64:
             raise ValueError('Worker capacity reached')
         w = Worker(uuid4().hex, socket, message.label, message.capabilities, time.monotonic())
+        w.network_id, w.node_id, w.user_id = message.network_id, message.node_id, user_id
         self.workers[w.worker_id] = w
+        if w.node_id:
+            from ..database import save_node
+            save_node(w)
         self.publish_workers()
         return w
 
+    def weights(self, network_id, cpu=False, normalized=True):
+        from collections import Counter
+        active = [w for w in self.workers.values() if w.network_id == network_id and w.active and w.visible]
+        def family(w):
+            a = w.capabilities.adapter
+            return '|'.join((a.vendor, a.architecture, a.device or a.description)).strip('|')
+        families = Counter(family(w) for w in active if w.capabilities.webgpu and family(w))
+        highest = max(families.values(), default=0)
+        scores = {}
+        for w in active:
+            caps = w.capabilities
+            if cpu:
+                score = caps.cpu_score if caps.cpu else 0
+            elif caps.webgpu and caps.benchmark:
+                score = caps.benchmark.pixels / (caps.benchmark.elapsed_ms / 1000)
+                if family(w) and families[family(w)] == highest and highest > 1:
+                    score *= 1.08
+            else:
+                score = 0
+            if score > 0:
+                scores[w.worker_id] = score
+        total = sum(scores.values())
+        return {k: v / total for k, v in scores.items()} if normalized and total else scores
+
+    def partitions(self, total, network_id, maximum=4096, cpu=False):
+        from ..common.nodes import ComputeNode
+        from ..node_ranker import allocate
+        scores = self.weights(network_id, cpu=cpu, normalized=False)
+        if not scores:
+            return [(offset, min(maximum, total-offset), None) for offset in range(0, total, maximum)]
+        shares = allocate(total, [ComputeNode(k, v) for k, v in scores.items()])
+        result, offset = [], 0
+        for node, count in shares.items():
+            while count:
+                size = min(maximum, count)
+                result.append((offset, size, node.node_id))
+                offset += size
+                count -= size
+        return result
+
     def compatible(self, worker, chunk=None):
+        if chunk and chunk.assignment.get('kind') == 'cpu':
+            return worker.capabilities.cpu
+        if not worker.capabilities.webgpu or not worker.capabilities.limits:
+            return False
         l = worker.capabilities.limits
         if chunk is None or chunk.tile is not None:
             size = chunk.byte_length if chunk else 16384
@@ -214,8 +277,9 @@ class Coordinator:
         from ..common.nodes import ComputeNode
         from ..node_ranker import allocate
         pending=[c for c in job.chunks if c.output is None and c.worker_id is None]
-        active=[w for w in self.workers.values() if w.active and w.visible and any(self.compatible(w,c) for c in pending)]
-        nodes=[ComputeNode(w.worker_id,w.capabilities.benchmark.pixels/(w.capabilities.benchmark.elapsed_ms/1000)) for w in active]
+        active=[w for w in self.workers.values() if w.network_id == job.network_id and w.active and w.visible and any(self.compatible(w,c) for c in pending)]
+        scores = self.weights(job.network_id, cpu=bool(pending and pending[0].assignment.get('kind') == 'cpu'), normalized=False)
+        nodes=[ComputeNode(w.worker_id, scores[w.worker_id]) for w in active]
         if not nodes:return
         # Cost units are output elements. Buffers/dispatch limits constrain each
         # indivisible chunk, so weighted quotas are approximated at chunk granularity.
@@ -233,7 +297,7 @@ class Coordinator:
         if worker.worker_id not in self.workers or worker.busy or not worker.active or not worker.visible:
             return NoWork(reason='Worker is paused or already working')
         for job in self.jobs.values():
-            if job.status not in ('queued','running'):
+            if job.network_id != worker.network_id or job.status not in ('queued','running'):
                 continue
             self.rank_pending(job)
             for chunk in job.chunks:
@@ -242,13 +306,17 @@ class Coordinator:
                 preferred=self.workers.get(chunk.preferred_worker)
                 if preferred and preferred.worker_id!=worker.worker_id and not preferred.busy:
                     continue
-                if chunk.previous_worker == worker.worker_id and any(w.worker_id != worker.worker_id and w.active and w.visible and not w.busy and self.compatible(w, chunk) for w in self.workers.values()):
+                if chunk.previous_worker == worker.worker_id and any(w.network_id == job.network_id and w.worker_id != worker.worker_id and w.active and w.visible and not w.busy and self.compatible(w, chunk) for w in self.workers.values()):
                     continue
                 chunk.attempts += 1
                 chunk.worker_id, chunk.attempt_id = worker.worker_id, uuid4().hex
                 duration = max(60, self.lease) if job.request.kind in ('onnx','wgsl_image') else self.lease
                 chunk.deadline = time.monotonic() + duration
                 worker.busy = (job.job_id, chunk.chunk_id)
+                worker.phase = 'receiving'
+                if worker.node_id:
+                    from ..database import save_node
+                    save_node(worker, received=len(str(chunk.assignment).encode()))
                 job.status = 'running'
                 self.publish(job)
                 return Assignment(job_id=job.job_id, chunk_id=chunk.chunk_id,
@@ -289,11 +357,24 @@ class Coordinator:
             job.image[start:start+len(payload)] = payload
         worker.busy = None
         worker.completed += 1
+        worker.phase = 'idle'
         worker.compute_ms += header.elapsed_ms
+        if worker.node_id:
+            from ..database import save_node
+            save_node(worker, sent=len(payload), completed=1)
         contribution = job.contributions.setdefault(worker.worker_id, Contribution(worker_id=worker.worker_id,label=worker.label,chunks=0,elapsed_ms=0))
         contribution.chunks += 1
         contribution.elapsed_ms += header.elapsed_ms
         if all(c.output is not None for c in job.chunks):
+            if job.reduction in ('sum', 'min', 'max'):
+                values = [v[0] for v in struct.iter_unpack('<f', job.image)]
+                value = job.initial + math.fsum(values) if job.reduction == 'sum' else (min if job.reduction == 'min' else max)([job.initial, *values])
+                if not math.isfinite(value) or abs(value) > 3.402823e38:
+                    self.finish(job, 'failed', 'CPU reduction overflowed float32')
+                    self.publish(job)
+                    return ResultAck(chunk_id=chunk.chunk_id, attempt_id=header.attempt_id, disposition='accepted')
+                job.image = bytearray(struct.pack('<f', value))
+                job.output_shape = [1]
             self.finish(job, 'done')
         self.emit(job.job_id, TileReady(job_id=job.job_id,tile=chunk.accepted))
         self.publish(job)

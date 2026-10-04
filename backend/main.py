@@ -1,4 +1,5 @@
 import asyncio
+from . import config  # Load .env before routers and middleware read settings.
 import contextlib
 import os
 import time
@@ -17,6 +18,9 @@ from .store import MemoryStore, Job
 from .scheduler import Scheduler
 from .converter import SourceRequest, CompatibilityReport, KernelValidation, analyze, validate_preview
 from .pool.routes import router as pool_router, pool
+from .auth import router as auth_router
+from .networks import router as network_router
+from .programs import router as program_router
 
 store = MemoryStore()
 scheduler = Scheduler(store)
@@ -36,7 +40,10 @@ async def lifespan(app):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(pool_router)
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_methods=['GET','POST'], allow_headers=['Content-Type'])
+app.include_router(auth_router)
+app.include_router(network_router)
+app.include_router(program_router)
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_credentials=True, allow_methods=['GET','POST'], allow_headers=['Content-Type','X-CSRF-Token'])
 
 @app.post('/kernels/analyze', response_model=CompatibilityReport)
 async def analyze_kernel(request: SourceRequest):

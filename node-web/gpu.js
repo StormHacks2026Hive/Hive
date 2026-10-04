@@ -26,14 +26,8 @@ export class TileGPU {
   async pipeline(shaderId) {
     if (this.pipelines.has(shaderId)) return this.pipelines.get(shaderId);
     const url = new URL(`/pool/assets/${shaderId}`, self.location.origin).href;
-    let response, cache;
-    // Cache failures are optional; private browsing/storage pressure must not block work.
-    try { cache = await caches.open('hive-shaders-v1'); response = await cache.match(url); } catch { /* use fetch */ }
-    if (!response) {
-      response = await fetch(url);
-      if (!response.ok) throw new Error('Shader download failed');
-      try { await cache?.put(url, response.clone()); } catch { /* cache is best effort */ }
-    }
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error('Shader download failed');
     const source = await response.text();
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
     const actual = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');

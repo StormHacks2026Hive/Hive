@@ -10,6 +10,7 @@ from google.auth.exceptions import GoogleAuthError, TransportError
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token
 from pydantic import BaseModel, ConfigDict, Field
+from . import database
 
 router = APIRouter(prefix='/auth', tags=['auth'])
 SESSION_COOKIE = 'hive_session'
@@ -32,7 +33,7 @@ class User(BaseModel):
 
 def cookie_options():
     return dict(httponly=True, secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true',
-                samesite='lax', path='/auth')
+                samesite='lax', path='/')
 
 
 def prune_sessions():
@@ -81,8 +82,10 @@ def google_login(payload: GoogleLogin, request: Request, response: Response):
         if len(sessions) >= 1024 and previous not in sessions:
             raise HTTPException(429, 'Sign-in is busy. Please try again later.')
         sessions.pop(previous, None)
+        database.remove_session(previous)
         session = secrets.token_urlsafe(32)
         sessions[session] = (user, time.time() + SESSION_SECONDS)
+        database.save_session(session, user, time.time() + SESSION_SECONDS)
     response.headers['Cache-Control'] = 'no-store'
     response.set_cookie(SESSION_COOKIE, session, max_age=SESSION_SECONDS, **cookie_options())
     return {'user': user}
@@ -90,13 +93,31 @@ def google_login(payload: GoogleLogin, request: Request, response: Response):
 
 @router.get('/me')
 def current_user(request: Request, response: Response):
+    user = user_for_request(request)
+    response.headers['Cache-Control'] = 'no-store'
+    if not user:
+        response.delete_cookie(SESSION_COOKIE, **cookie_options())
+    return {'user': user}
+
+
+def user_for_request(request):
+    token = request.cookies.get(SESSION_COOKIE)
     with sessions_lock:
         prune_sessions()
-        session = sessions.get(request.cookies.get(SESSION_COOKIE))
-    response.headers['Cache-Control'] = 'no-store'
-    if not session:
-        response.delete_cookie(SESSION_COOKIE, **cookie_options())
-    return {'user': session[0] if session else None}
+        session = sessions.get(token)
+    if session:
+        return session[0]
+    saved = database.read_session(token)
+    return User(id=saved['id'], name=saved['name'], email=saved['email']) if saved else None
+
+
+def require_user(request):
+    user = user_for_request(request)
+    if not user:
+        raise HTTPException(401, 'Sign in to continue.')
+    if request.scope['type'] == 'http' and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+        require_csrf(request)
+    return user
 
 
 @router.post('/logout')
@@ -104,6 +125,7 @@ def logout(request: Request, response: Response):
     require_csrf(request)
     with sessions_lock:
         sessions.pop(request.cookies.get(SESSION_COOKIE), None)
+        database.remove_session(request.cookies.get(SESSION_COOKIE))
     response.headers['Cache-Control'] = 'no-store'
     response.delete_cookie(SESSION_COOKIE, **cookie_options())
     return {'user': None}

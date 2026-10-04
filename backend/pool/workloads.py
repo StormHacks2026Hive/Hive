@@ -66,7 +66,7 @@ def asset(data):
     return hashlib.sha256(data).hexdigest(), data
 
 
-def compute_plan(request):
+def compute_plan(request, partitions=None):
     values = request.input.decode() if request.input else None
     total = len(values) if values is not None else request.count
     if total < 1:
@@ -110,9 +110,12 @@ def compute_plan(request):
         uniforms = [{'name':n, 'type':'u32'} for n in ('offset','count','seed')]
     shader_id, data = asset(code.encode())
     chunks = []
-    for offset in range(0, total, request.chunk_size):
-        count = min(request.chunk_size, total-offset)
+    pieces = partitions or [(offset, min(request.chunk_size, total-offset), None) for offset in range(0, total, request.chunk_size)]
+    if len(pieces) > 2048:
+        raise ValueError('Maximum 2048 chunks; increase chunk_size')
+    for offset, count, preferred_worker in pieces:
         chunks.append({'chunk_id':f'batch-{offset}', 'offset':offset, 'count':count, 'byte_length':count*4,
+            'preferred_worker': preferred_worker,
             'assignment':{'kind':'compute', 'shader_id':shader_id, 'output_format':dtype, 'offset':offset, 'count':count,
                 'bindings':bindings, 'uniforms':uniforms, 'compute_parameters':{'offset':offset, 'count':count, 'seed':request.seed},
                 'input':TypedArray.encode(values[offset:offset+count], request.input.dtype).model_dump() if values is not None else None}})

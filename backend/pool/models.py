@@ -52,11 +52,20 @@ class Benchmark(Model):
 
 class Capabilities(Model):
     onnx: bool = False
-    webgpu: Literal[True]
+    webgpu: bool
+    cpu_score: float = Field(default=1, gt=0, le=1e12)
+    cpu: bool = True
+    device_type: Literal['desktop', 'laptop', 'phone', 'tablet', 'browser'] = 'browser'
     adapter: Adapter
-    limits: Limits
+    limits: Limits | None = None
     features: list[Literal['shader-f16']] = Field(default_factory=list, max_length=1)
-    benchmark: Benchmark
+    benchmark: Benchmark | None = None
+
+    @model_validator(mode='after')
+    def gpu_details(self):
+        if self.webgpu and (self.limits is None or self.benchmark is None):
+            raise ValueError('WebGPU nodes must supply device limits and a benchmark')
+        return self
 
 class Wire(Model):
     v: Literal[1] = 1
@@ -65,16 +74,20 @@ class Register(Wire):
     type: Literal['register']
     label: str = Field(min_length=1, max_length=80)
     capabilities: Capabilities
+    network_id: str | None = Field(default=None, max_length=64)
+    node_id: str | None = Field(default=None, max_length=64)
 
 class Registered(Wire):
     type: Literal['registered'] = 'registered'
     worker_id: str
     heartbeat_ms: int = 5000
+    mode: Literal['running', 'paused'] = 'running'
 
 class Heartbeat(Wire):
     type: Literal['heartbeat']
     visible: bool
     attempt_id: str | None = None
+    phase: Literal['idle', 'receiving', 'working', 'sending'] = 'idle'
 
 class RequestChunk(Wire):
     type: Literal['request_chunk']
@@ -109,7 +122,8 @@ class Assignment(Wire):
     job_id: str
     chunk_id: str
     attempt_id: str
-    kind: Literal['image_tile', 'compute', 'onnx_batch', 'texture_tile'] = 'image_tile'
+    kind: Literal['image_tile', 'compute', 'onnx_batch', 'texture_tile', 'cpu'] = 'image_tile'
+    cpu_program: dict | None = None
     uniform_data: str | None = Field(default=None, max_length=1024)
     shader_id: str | None = None
     tile: Tile | None = None
@@ -168,6 +182,9 @@ class WorkerStatus(Model):
     completed_chunks: int
     compute_ms: float
     pixels_per_second: float
+    node_id: str | None = None
+    network_id: str | None = None
+    weight: float = 0
 
 class AcceptedTile(Model):
     chunk_id: str

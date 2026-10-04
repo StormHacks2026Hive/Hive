@@ -3,3 +3,12 @@
 __pycache__/
 .pytest_cache/
 node_modules/
+HiveFrontend/.env.local
+
+.env
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+HiveFrontend/dist/
+HiveFrontend/.previous-dist/

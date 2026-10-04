@@ -14,3 +14,4 @@ google-auth>=2,<3
 cryptography>=44
 requests>=2,<3
 Pillow>=11,<13
+python-dotenv>=1,<2

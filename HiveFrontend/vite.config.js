@@ -14,6 +14,8 @@ export default defineConfig({
     proxy: {
       '^/pool(?:/|$)': { target: backendUrl, ws: true },
       '/shared': backendUrl,
+      '/auth': backendUrl,
+      '/api': { target: backendUrl, ws: true },
       '/kernels': backendUrl,
       '/jobs': backendUrl,
       '^/node(?:/|$)': backendUrl,

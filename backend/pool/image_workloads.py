@@ -92,10 +92,13 @@ class ImageAnalysisRequest(Model):
     source: str = Field(min_length=1, max_length=65536)
     width: int | None = Field(default=None, ge=1, le=4096)
     height: int | None = Field(default=None, ge=1, le=4096)
+    settings: dict = Field(default_factory=dict)
 
 
 class WGSLImageRequest(ImageAnalysisRequest):
     kind: Literal["wgsl_image"]
+    frames: list[dict] = Field(default_factory=lambda: [{}], min_length=1, max_length=32)
+    fps: int = Field(default=12, ge=1, le=60)
 
 
 class ImageAnalysis(Model):
@@ -166,6 +169,7 @@ def extract(request: ImageAnalysisRequest) -> tuple[str, RenderSettings]:
         raise ValueError(
             "This image upload supports the registered Mandelbulb shader; altered or arbitrary texture shaders need a separate independence analysis"
         )
+    settings.update(request.settings)
     if request.width is not None:
         settings["width"] = request.width
     if request.height is not None:
@@ -247,6 +251,21 @@ def uniform_data(config: RenderSettings) -> bytes:
 def image_plan(request: ImageAnalysisRequest) -> dict[str, Any]:
     """Plan bounded 128x128 texture tiles with clipped right/bottom edges."""
     _shader, config = extract(request)
+    frames = getattr(request, 'frames', [{}])
+    if len(frames) > 1 or frames[0]:
+        if config.width * config.height * 4 * len(frames) > 100_663_296:
+            raise ValueError('Animation output must fit 96 MiB; reduce dimensions or frame count')
+        plans = [image_plan(ImageAnalysisRequest(source=request.source, width=config.width, height=config.height,
+                 settings={**request.settings, **frame, 'width': config.width, 'height': config.height})) for frame in frames]
+        chunks = []
+        for i, frame_plan in enumerate(plans):
+            for chunk in frame_plan['chunks']:
+                chunk['chunk_id'] = f"frame-{i}-" + chunk['chunk_id']
+                chunk['frame_index'] = i
+                chunk['assignment']['frame_index'] = i
+                chunks.append(chunk)
+        return {**plans[0], 'chunks': chunks, 'size': sum(p['size'] for p in plans),
+                'output_shape': [len(frames), config.height, config.width, 4]}
     code = tiled_shader(SHADER).encode()
     shader_id = hashlib.sha256(code).hexdigest()
     packed = base64.b64encode(uniform_data(config)).decode()
