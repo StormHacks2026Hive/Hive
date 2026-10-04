@@ -1,8 +1,23 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { advancePreview, createPreviewNodes } from '../src/network.js'
+import { advancePreview, createPreviewNodes, killPreviewNode } from '../src/network.js'
 
-const settings = { mode: 'running', accepting: true, capacity: 60 }
+const settings = { mode: 'running' }
+
+test('killing the selected peer stops only that peer across later preview ticks', () => {
+  const starting = createPreviewNodes('Test User')
+  let nodes = killPreviewNode(starting, 'amber')
+  const stopped = nodes.find((node) => node.id === 'amber')
+  assert.equal(stopped.status, 'offline')
+  assert.equal(stopped.rate, 0)
+  assert.equal(stopped.received, starting.find((node) => node.id === 'amber').received)
+  assert.deepEqual(nodes.filter((node) => node.id !== 'amber'), starting.filter((node) => node.id !== 'amber'))
+  for (let tick = 0; tick < 12; tick += 1) {
+    nodes = advancePreview(nodes, tick, settings)
+    assert.deepEqual(nodes.find((node) => node.id === 'amber'), stopped)
+  }
+  assert.ok(nodes[0].received > starting[0].received)
+})
 
 test('paused and switched-off nodes never transfer or receive more data', () => {
   for (const mode of ['paused', 'off']) {
@@ -22,22 +37,6 @@ test('paused and switched-off nodes never transfer or receive more data', () => 
   }
 })
 
-test('disabling incoming data blocks receipts but still permits sending', () => {
-  let nodes = createPreviewNodes('Test User')
-  let sawSending = false
-  for (let tick = 0; tick < 12; tick += 1) {
-    nodes = advancePreview(nodes, tick, { ...settings, accepting: false })
-    const own = nodes.find((node) => node.own)
-    assert.notEqual(own.status, 'receiving')
-    assert.equal(own.received, 0)
-    if (own.status === 'sending') {
-      sawSending = true
-      assert.ok(own.rate > 0)
-    }
-  }
-  assert.ok(sawSending)
-})
-
 test('offline peers stay offline while running nodes receive data', () => {
   let nodes = createPreviewNodes('Test User')
   const offline = nodes.find((node) => node.status === 'offline')
@@ -51,13 +50,15 @@ test('offline peers stay offline while running nodes receive data', () => {
   assert.ok(nodes.find((node) => node.own).received > 0)
 })
 
-test('compute contribution scales only the local transfer rate', () => {
-  const initial = createPreviewNodes('Test User')
-  const low = advancePreview(initial, 0, { ...settings, capacity: 10 })
-  const high = advancePreview(initial, 0, { ...settings, capacity: 100 })
-  assert.ok(low[0].rate < high[0].rate)
-  assert.deepEqual(
-    low.filter((node) => !node.own),
-    high.filter((node) => !node.own),
-  )
+test('a resumed local node receives and sends normally', () => {
+  let nodes = createPreviewNodes('Test User')
+  nodes = advancePreview(nodes, 0, { mode: 'paused' })
+  const pausedData = nodes[0].received
+  let sawSending = false
+  for (let tick = 0; tick < 12; tick += 1) {
+    nodes = advancePreview(nodes, tick, settings)
+    if (nodes[0].status === 'sending') sawSending = true
+  }
+  assert.ok(nodes[0].received > pausedData)
+  assert.ok(sawSending)
 })

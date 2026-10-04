@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
-import { advancePreview, createPreviewNodes, formatData, STATUS } from '../network.js'
-import { HexIcon, Icon } from './HiveScene.jsx'
+import { advancePreview, createPreviewNodes, formatData, killPreviewNode, STATUS } from '../network.js'
+import { HangingHive, HexIcon, Icon } from './HiveScene.jsx'
 import NetworkSetup from './NetworkSetup.jsx'
 import NodeMap from './NodeMap.jsx'
+import NodeWork from './NodeWork.jsx'
+import useUITransition from '../useUITransition.js'
 
-function ConfirmDialog({ type, onClose, onConfirm }) {
+function ConfirmDialog({ type, nodeName, onClose, onConfirm }) {
   const dialog = useRef(null)
   useEffect(() => {
     dialog.current.showModal()
   }, [])
   const leaving = type === 'leave'
+  const killing = type === 'kill'
   return (
     <dialog
       ref={dialog}
@@ -24,36 +27,40 @@ function ConfirmDialog({ type, onClose, onConfirm }) {
       <div className="dialog-icon">
         <Icon name={leaving ? 'logout' : 'power'} />
       </div>
-      <h2 id="confirm-title">{leaving ? 'Leave this hive?' : 'Turn off your node?'}</h2>
+      <h2 id="confirm-title">{leaving ? 'Leave this hive?' : killing ? `Kill ${nodeName}?` : 'Turn off your node?'}</h2>
       <p id="confirm-description">
         {leaving
-          ? 'Your node will disconnect. You can join again with the network ID and password.'
-          : 'Your node will stop sending and receiving data. You can switch it back on whenever you’re ready.'}
+          ? 'Your node will disconnect.'
+          : 'Data transfer will stop.'}
       </p>
       <div className="dialog-actions">
         <button className="button button-secondary" onClick={onClose} autoFocus>
-          Keep connected
+          Cancel
         </button>
         <button className="button button-danger" onClick={onConfirm}>
-          {leaving ? 'Leave network' : 'Turn off node'}
+          {leaving ? 'Leave network' : killing ? 'Kill node' : 'Turn off node'}
         </button>
       </div>
     </dialog>
   )
 }
 
-export default function Dashboard({ user, onSignOut, headingRef }) {
-  const [tab, setTab] = useState('network')
-  const [network, setNetwork] = useState(null)
+export default function Dashboard({ user, initialState, onWorkspaceChange, onSignOut, headingRef }) {
+  const [tab, setTab] = useState(initialState?.tab || 'network')
+  const [network, setNetwork] = useState(initialState?.network || null)
   const [knownNetworks, setKnownNetworks] = useState([])
-  const [nodes, setNodes] = useState([])
-  const [positions, setPositions] = useState({})
-  const [mode, setMode] = useState('running')
-  const [accepting, setAccepting] = useState(true)
-  const [capacity, setCapacity] = useState(60)
-  const [events, setEvents] = useState([])
+  const [nodes, setNodes] = useState(initialState?.nodes || [])
+  const [positions, setPositions] = useState(initialState?.positions || {})
+  const [mode, setMode] = useState(initialState?.mode || 'running')
+  const [events, setEvents] = useState(initialState?.events || [])
+  const [mapView, setMapView] = useState(initialState?.mapView || { selectedId: 'you', filter: 'all', zoom: 1 })
   const [notice, setNotice] = useState('')
   const [confirm, setConfirm] = useState(null)
+  const transition = useUITransition()
+
+  useEffect(() => {
+    onWorkspaceChange({ tab, network, nodes, positions, mode, events, mapView })
+  }, [tab, network, nodes, positions, mode, events, mapView, onWorkspaceChange])
 
   useEffect(() => {
     document.title = 'Hive · Your network'
@@ -67,10 +74,10 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
     let tick = 0
     const timer = setInterval(() => {
       tick += 1
-      setNodes((current) => advancePreview(current, tick, { mode, accepting, capacity }))
+      setNodes((current) => advancePreview(current, tick, { mode }))
     }, 3000)
     return () => clearInterval(timer)
-  }, [network, mode, accepting, capacity])
+  }, [network, mode])
 
   useEffect(() => {
     if (!notice) return
@@ -93,33 +100,36 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
   }
 
   function connect(nextNetwork) {
-    setNetwork(nextNetwork)
-    if (nextNetwork.owner && !knownNetworks.some((item) => item.id === nextNetwork.id))
-      setKnownNetworks((current) => [...current, nextNetwork])
-    setNodes(createPreviewNodes(user.name))
-    setPositions({})
-    setMode('running')
-    setAccepting(true)
-    setCapacity(60)
-    setEvents([])
-    log(
-      nextNetwork.owner
-        ? `Created ${nextNetwork.name}. Your hive is ready.`
-        : `Joined ${nextNetwork.name}. Welcome to the hive.`,
-    )
-    setNotice(
-      nextNetwork.owner
-        ? 'Your network is ready. Share its ID and password to invite others.'
-        : 'You’re in. Your node is connected to the network.',
-    )
+    transition(() => {
+      setNetwork(nextNetwork)
+      if (nextNetwork.owner && !knownNetworks.some((item) => item.id === nextNetwork.id))
+        setKnownNetworks((current) => [...current, nextNetwork])
+      setNodes(createPreviewNodes(user.name))
+      setPositions({})
+      setMode('running')
+      setMapView({ selectedId: 'you', filter: 'all', zoom: 1 })
+      setEvents([])
+      log(
+        nextNetwork.owner
+          ? `Created ${nextNetwork.name}`
+          : `Joined ${nextNetwork.name}`,
+      )
+      setNotice(
+        nextNetwork.owner ? 'Network created' : 'Connected',
+      )
+    }, { page: true })
+  }
+
+  function changeTab(nextTab) {
+    transition(() => setTab(nextTab), { page: true })
   }
 
   function changeMode(nextMode) {
     if (nextMode === 'off') {
-      setConfirm('off')
+      transition(() => setConfirm('off'))
       return
     }
-    applyMode(nextMode)
+    transition(() => applyMode(nextMode))
   }
 
   function applyMode(nextMode) {
@@ -128,50 +138,50 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
     setNodes((current) => current.map((node) => (node.own ? { ...node, status, rate: 0 } : node)))
     log(
       nextMode === 'off'
-        ? 'Your node was turned off.'
+        ? 'Node off'
         : nextMode === 'paused'
-          ? 'Your node is paused. Take a breather.'
-          : 'Your node is back online.',
+          ? 'Node paused'
+          : 'Node started',
       nextMode === 'off' ? 'power' : nextMode === 'paused' ? 'pause' : 'play',
     )
     setNotice(
       nextMode === 'off'
-        ? 'Node turned off. Your network membership is saved for this visit.'
+        ? 'Node off'
         : nextMode === 'paused'
-          ? 'Data transfer paused.'
-          : 'Your node is ready to share again.',
+          ? 'Node paused'
+          : 'Node started',
     )
   }
 
   function confirmAction() {
-    if (confirm === 'leave') {
-      setNetwork(null)
-      setNodes([])
-      setPositions({})
-      setEvents([])
-      setNotice('You left the network.')
-      setTab('network')
-    } else applyMode('off')
-    setConfirm(null)
-  }
-
-  function toggleReceiving() {
-    setAccepting(!accepting)
-    if (accepting)
-      setNodes((current) =>
-        current.map((node) =>
-          node.own && node.status === 'receiving' ? { ...node, status: 'idle', rate: 0 } : node,
-        ),
-      )
-    log(accepting ? 'Incoming data is now disabled.' : 'Incoming data is now enabled.', 'down')
+    const leaving = confirm === 'leave'
+    transition(() => {
+      if (leaving) {
+        setNetwork(null)
+        setNodes([])
+        setPositions({})
+        setEvents([])
+        setNotice('Disconnected')
+        setTab('network')
+      } else if (confirm?.type === 'kill') {
+        const target = nodes.find((node) => node.id === confirm.nodeId)
+        if (target?.own) applyMode('off')
+        else if (target) {
+          setNodes((current) => killPreviewNode(current, target.id))
+          log(`${target.name} stopped`, 'power')
+          setNotice(`${target.name} stopped`)
+        }
+      } else applyMode('off')
+      setConfirm(null)
+    }, { page: leaving })
   }
 
   async function copyId() {
     try {
       await navigator.clipboard.writeText(network.id)
-      setNotice('Network ID copied. Share it with your people.')
+      setNotice('Network ID copied')
     } catch {
-      setNotice('Couldn’t copy. Select the network ID below and copy it manually.')
+      setNotice('Copy failed. Select the ID to copy it.')
     }
   }
 
@@ -185,12 +195,11 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
         <a className="brand" href="/" aria-label="Hive home">
           <HexIcon /> hive<span className="brand-dot">.</span>
         </a>
-        <div className="workspace-label">YOUR WORKSPACE</div>
         <nav aria-label="Main navigation">
           <button
             className={tab === 'network' ? 'nav-item active' : 'nav-item'}
             aria-current={tab === 'network' ? 'page' : undefined}
-            onClick={() => setTab('network')}
+            onClick={() => changeTab('network')}
           >
             <Icon name="network" />
             Network
@@ -199,26 +208,13 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
           <button
             className={tab === 'mapping' ? 'nav-item active' : 'nav-item'}
             aria-current={tab === 'mapping' ? 'page' : undefined}
-            onClick={() => setTab('mapping')}
+            onClick={() => changeTab('mapping')}
           >
             <Icon name="map" />
             Mapping
             <Icon className="nav-arrow" name="arrow" />
           </button>
         </nav>
-        <div className="sidebar-garden">
-          <div className="garden-combs" aria-hidden="true">
-            <HexIcon />
-            <HexIcon />
-            <HexIcon />
-          </div>
-          <strong>Better, together.</strong>
-          <p>
-            A little of your power.
-            <br />A lot of possibility.
-          </p>
-          <span>Every connection counts.</span>
-        </div>
         <div className="sidebar-account">
           <span className="account-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
           <div>
@@ -235,44 +231,31 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
           </button>
         </div>
       </aside>
-      <div className="workspace">
+      <div className={`workspace ${network ? 'is-connected' : ''}`}>
         <header className="workspace-header">
           <div className="breadcrumb">
             Workspace <span>/</span>
             <strong>{tab === 'network' ? 'Network' : 'Mapping'}</strong>
           </div>
-          <span className="workspace-status">
-            <i className={network ? 'connected-dot' : ''} />
-            {network
-              ? mode === 'off'
-                ? 'Node offline'
-                : 'Connected to your hive'
-              : 'Ready when you are'}
-          </span>
+          {network && (
+            <span className="workspace-status">
+              <i className="connected-dot" />
+              {mode === 'off' ? 'Node offline' : 'Connected'}
+            </span>
+          )}
         </header>
-        <main className="workspace-main">
+        <main className="workspace-main" key={`${tab}-${network?.id || 'setup'}`}>
           <div className="page-heading">
             <div>
-              <span className="section-kicker">
-                {tab === 'network'
-                  ? 'YOUR LITTLE PART OF SOMETHING BIGGER'
-                  : 'EVERY CONNECTION COUNTS'}
-              </span>
               <h1 ref={headingRef} tabIndex={-1}>
-                {tab === 'network' ? `Welcome, ${user.name.split(' ')[0]}.` : 'A bird’s-eye view.'}
+                {tab === 'network' ? network?.name || `Welcome, ${user.name.split(' ')[0]}.` : 'Network map'}
               </h1>
-              <p>
-                {tab === 'network'
-                  ? network
-                    ? 'You’re part of the hive. Make yourself at home.'
-                    : 'Let’s find a place for your node to call home.'
-                  : 'Meet your nodes. See what’s moving. Stay connected.'}
-              </p>
             </div>
             <div className="page-heading-comb" aria-hidden="true">
               <HexIcon />
             </div>
           </div>
+          <div className={`workspace-content ${network ? 'connected-content' : ''}`}>
           {tab === 'network' ? (
             !network ? (
               <NetworkSetup onConnect={connect} knownNetworks={knownNetworks} />
@@ -280,14 +263,8 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
               <>
                 <section className="connected-network panel" aria-labelledby="network-title">
                   <div className="network-identity">
-                    <span className="network-symbol">
-                      <HexIcon />
-                    </span>
                     <div>
-                      <span className="section-kicker">
-                        {network.owner ? 'YOUR NETWORK' : 'CONNECTED NETWORK'}
-                      </span>
-                      <h2 id="network-title">{network.name}</h2>
+                      <h2 id="network-title">Network ID</h2>
                       <div className="network-id">
                         <span className="mono">{network.id}</span>
                         <button
@@ -301,52 +278,40 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
                     </div>
                   </div>
                   <div className="network-header-actions">
-                    <span className="preview-badge">
-                      <span /> Local preview
-                    </span>
-                    <button className="text-button" onClick={() => setConfirm('leave')}>
-                      Leave network
+                    <button
+                      className="button button-secondary"
+                      aria-label="Leave network"
+                      onClick={() => transition(() => setConfirm('leave'))}
+                    >
+                      Leave
                       <Icon name="logout" />
                     </button>
                   </div>
                 </section>
                 <div className="stats-row">
                   <div className="stat-card">
-                    <span className="stat-icon">
-                      <Icon name="network" />
-                    </span>
                     <span>Nodes online</span>
                     <strong>
                       {onlineCount}
                       <small> / {nodes.length}</small>
                     </strong>
-                    <p>A growing little community</p>
                   </div>
                   <div className="stat-card">
-                    <span className="stat-icon amber">
-                      <Icon name="down" />
-                    </span>
-                    <span>Receiving data</span>
+                    <span>Receiving</span>
                     <strong>
                       {receivingCount}
                       <small> nodes</small>
                     </strong>
-                    <p>Data finding its way home</p>
                   </div>
                   <div className="stat-card">
-                    <span className="stat-icon">
-                      <Icon name="down" />
-                    </span>
-                    <span>Your data received</span>
+                    <span>Data received</span>
                     <strong>{formatData(own.received)}</strong>
-                    <p>Since you joined this network</p>
                   </div>
                 </div>
                 <div className="network-detail-grid">
                   <section className="node-control panel" aria-labelledby="your-node-title">
                     <div className="panel-header">
                       <div>
-                        <span className="section-kicker">YOUR CONTRIBUTION</span>
                         <h2 id="your-node-title">Your node</h2>
                       </div>
                       <span className={`status-pill ${own.status}`}>
@@ -354,63 +319,14 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
                         {STATUS[own.status].label}
                       </span>
                     </div>
-                    <div className="your-node-summary">
-                      <div className={`your-node-comb ${own.status}`}>
-                        <HexIcon />
-                      </div>
-                      <div>
-                        <strong>
-                          {mode === 'off'
-                            ? 'Resting for now.'
-                            : mode === 'paused'
-                              ? 'Taking a breather.'
-                              : 'Small node. Real possibility.'}
-                        </strong>
-                        <p>
-                          {mode === 'off'
-                            ? 'Switch on whenever you’re ready to contribute.'
-                            : mode === 'paused'
-                              ? 'Your place in the network is still here.'
-                              : 'Choose how much you’d like to share.'}
-                        </p>
+                    <div className={`node-hive-preview ${own.status}`}>
+                      <HangingHive />
+                      <div className="node-hive-readout">
+                        <strong>{own.rate.toFixed(1)}</strong>
+                        <span>MB/s</span>
                       </div>
                     </div>
-                    <div className="capacity-control">
-                      <div>
-                        <label htmlFor="capacity">Compute contribution</label>
-                        <strong>{capacity}%</strong>
-                      </div>
-                      <input
-                        id="capacity"
-                        type="range"
-                        min="10"
-                        max="100"
-                        step="10"
-                        value={capacity}
-                        disabled={mode === 'off'}
-                        onChange={(event) => setCapacity(Number(event.target.value))}
-                      />
-                      <div className="range-labels">
-                        <span>A little</span>
-                        <span>All in</span>
-                      </div>
-                    </div>
-                    <div className="receiving-control">
-                      <div>
-                        <strong>Receive incoming data</strong>
-                        <span>Let other nodes send data to yours.</span>
-                      </div>
-                      <button
-                        className={`switch ${accepting ? 'on' : ''}`}
-                        role="switch"
-                        aria-label="Receive incoming data"
-                        aria-checked={accepting}
-                        disabled={mode === 'off'}
-                        onClick={toggleReceiving}
-                      >
-                        <span />
-                      </button>
-                    </div>
+                    <NodeWork node={own} />
                     <div className="node-control-actions">
                       <button
                         className="button button-secondary"
@@ -437,10 +353,8 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
                   <section className="activity-panel panel" aria-labelledby="activity-title">
                     <div className="panel-header">
                       <div>
-                        <span className="section-kicker">IN YOUR CORNER</span>
-                        <h2 id="activity-title">Recent activity</h2>
+                        <h2 id="activity-title">Activity</h2>
                       </div>
-                      <span className="little-dot" />
                     </div>
                     <ol className="activity-list">
                       {events.map((event) => (
@@ -455,14 +369,14 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
                         </li>
                       ))}
                     </ol>
-                    <button className="activity-map-link" onClick={() => setTab('mapping')}>
+                    <button className="activity-map-link" onClick={() => changeTab('mapping')}>
                       <div className="tiny-hex-cluster" aria-hidden="true">
                         <HexIcon />
                         <HexIcon />
                         <HexIcon />
                       </div>
                       <span>
-                        See how your hive connects<small>Explore the network map</small>
+                        Open map
                       </span>
                       <Icon name="arrow" />
                     </button>
@@ -477,15 +391,16 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
               onPositionsChange={setPositions}
               network={network}
               mode={mode}
+              view={mapView}
+              onViewChange={setMapView}
               onModeChange={changeMode}
-              onNetworkTab={() => setTab('network')}
+              onKillNode={(nodeId) => setConfirm({ type: 'kill', nodeId })}
+              onNetworkTab={() => changeTab('network')}
             />
           )}
+          </div>
           <footer className="workspace-footer">
-            <span>
-              <HexIcon /> Small nodes. Shared possibilities.
-            </span>
-            <span>Local preview · Network activity is simulated</span>
+            <span>Simulated network</span>
           </footer>
         </main>
       </div>
@@ -503,7 +418,12 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
         </div>
       )}
       {confirm && (
-        <ConfirmDialog type={confirm} onClose={() => setConfirm(null)} onConfirm={confirmAction} />
+        <ConfirmDialog
+          type={typeof confirm === 'string' ? confirm : confirm.type}
+          nodeName={nodes.find((node) => node.id === confirm.nodeId)?.own ? 'your node' : nodes.find((node) => node.id === confirm.nodeId)?.name}
+          onClose={() => setConfirm(null)}
+          onConfirm={confirmAction}
+        />
       )}
     </div>
   )

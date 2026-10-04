@@ -54,8 +54,10 @@ checked for expected audience, issuer, and expiration, but the token signature
 is not verified. This is only a frontend account preview; it does not establish
 an authenticated backend session or authorize access to any API.
 
-Profile data stays in React memory, so refreshing the page resets sign-in.
-Tokens are not persisted. Sign out clears the profile and disables Google's
+Profile and workspace display state are saved in local storage, so refreshing
+restores your account, connected network, active tab, node mode, map positions,
+selection, filters, zoom, and recent activity. Google tokens and network
+passwords are not saved. Sign out clears the saved session and disables Google's
 automatic account selection; it leaves your Google account signed in.
 There are no requests to `/auth`.
 
@@ -65,16 +67,25 @@ a network gives you an ID to copy and share. Networks created during this visit
 can be rejoined with their matching password; other IDs open a local preview.
 This does not create or connect to a real network.
 
-The workspace includes pause/resume, turn off/start, leave-network controls,
-a compute contribution slider, and an incoming-data switch. The Mapping tab
+The workspace includes pause/resume, turn off/start, and leave-network controls.
+The Node work section shows current preview transfer activity, incoming data,
+received totals, and actual browser WebGPU adapter availability. No compute
+kernel is dispatched by this frontend; it reports that no kernel is running.
+The Mapping tab
 shows seven sample nodes with simulated receiving, sending, idle, paused, and
 offline states. Select a comb to inspect its transfer rate and received data,
 or use the filters and zoom controls. Only your own node has controls. Activity
 updates every three seconds. Node transfer stops immediately when paused or
 switched off. The animation respects reduced-motion preferences.
 
-Networks, passwords, profile data, and activity stay in memory. Refreshing or
-signing out resets the workspace. No credentials or passwords are persisted.
+Leaving disconnects the saved network. Passwords for rejoining networks created
+during the current visit stay in memory only. The workspace keeps its warm
+white background when connecting. Page changes gently crossfade and respect
+reduced motion, with an animated fallback for browsers without View Transitions.
+The connected Network and Mapping views adapt to the viewport; the activity
+list scrolls within its panel. Select any preview node on the map to kill it.
+Stopped nodes stay offline after refresh. Your own node also has pause and
+restart controls. These controls affect the simulated network only.
 
 When backend authentication is added later, verify the ID token on the server
 and establish a server session before granting access to protected resources.

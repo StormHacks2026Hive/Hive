@@ -80,7 +80,7 @@ export function Icon({ name, ...props }) {
   )
 }
 
-// The same illustrated tree is used behind the login hive and the node map.
+// The tree belongs to the illustrated login scene.
 export function TreeArt() {
   return (
     <>
@@ -126,45 +126,51 @@ export function TreeArt() {
   )
 }
 
+export function HiveBody({ doorRadius = 113, shaded = true }) {
+  return (
+    <g stroke="#5c421b" strokeWidth="2.5" strokeLinejoin="round">
+      <ellipse cx="200" cy="346" rx="121" ry="76" fill="#945911" />
+      <path
+        d="M55 288c0-43 63-72 145-72s145 29 145 72v35c0 41-59 64-145 64S55 364 55 323Z"
+        fill="#ba7618"
+      />
+      <path
+        d="M320 272c23 28 18 81-23 98-34 14-83 19-122 14 102 20 170-7 170-61v-35Z"
+        fill="#945911"
+        stroke="none"
+      />
+      <ellipse cx="200" cy="109" rx="121" ry="80" fill="#945911" />
+      <path d="M50 173c0-44 66-79 150-79s150 35 150 79v33H50Z" fill="#ba7618" />
+      <path d="M50 173c0-44 66-79 150-79s150 35 150 79" fill="none" />
+      <path
+        d="M15 231c0-57 62-96 185-96s185 39 185 96c0 73-37 91-185 91S15 304 15 231Z"
+        fill="#bd7718"
+      />
+      <path
+        d="M331 157c40 46 41 123 5 147-22 14-52 15-68 16 89-4 117-24 117-89 0-33-20-58-54-74Z"
+        fill="#9b6012"
+        stroke="none"
+      />
+      <path
+        d="M15 231c0-57 62-96 185-96s185 39 185 96c0 73-37 91-185 91S15 304 15 231Z"
+        fill="none"
+      />
+      <circle className="hive-door" cx="200" cy="232" r={doorRadius} fill="#ffd16a" strokeWidth="2" />
+      {shaded && <path
+        className="hive-door-shade"
+        d="M211 120c105 15 133 158 26 221 121-33 119-208-26-221Z"
+        fill="#eea10a"
+        stroke="none"
+      />}
+    </g>
+  )
+}
+
 export function HangingHive() {
   return (
     <svg className="hive-illustration" viewBox="0 0 400 450" aria-hidden="true">
       <path d="m206 2-5 69" stroke="#493920" strokeWidth="12" strokeLinecap="round" />
-      <g stroke="#5c421b" strokeWidth="2.5" strokeLinejoin="round">
-        <ellipse cx="200" cy="346" rx="121" ry="76" fill="#945911" />
-        <path
-          d="M55 288c0-43 63-72 145-72s145 29 145 72v35c0 41-59 64-145 64S55 364 55 323Z"
-          fill="#ba7618"
-        />
-        <path
-          d="M320 272c23 28 18 81-23 98-34 14-83 19-122 14 102 20 170-7 170-61v-35Z"
-          fill="#945911"
-          stroke="none"
-        />
-        <ellipse cx="200" cy="109" rx="121" ry="80" fill="#945911" />
-        <path d="M50 173c0-44 66-79 150-79s150 35 150 79v33H50Z" fill="#ba7618" />
-        <path d="M50 173c0-44 66-79 150-79s150 35 150 79" fill="none" />
-        <path
-          d="M15 231c0-57 62-96 185-96s185 39 185 96c0 73-37 91-185 91S15 304 15 231Z"
-          fill="#bd7718"
-        />
-        <path
-          d="M331 157c40 46 41 123 5 147-22 14-52 15-68 16 89-4 117-24 117-89 0-33-20-58-54-74Z"
-          fill="#9b6012"
-          stroke="none"
-        />
-        <path
-          d="M15 231c0-57 62-96 185-96s185 39 185 96c0 73-37 91-185 91S15 304 15 231Z"
-          fill="none"
-        />
-        <circle className="hive-door" cx="200" cy="232" r="113" fill="#ffd16a" strokeWidth="2" />
-        <path
-          className="hive-door-shade"
-          d="M211 120c105 15 133 158 26 221 121-33 119-208-26-221Z"
-          fill="#eea10a"
-          stroke="none"
-        />
-      </g>
+      <HiveBody />
     </svg>
   )
 }

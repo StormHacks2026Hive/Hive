@@ -46,16 +46,11 @@ export default function NetworkSetup({ onConnect, knownNetworks }) {
   return (
     <div className="network-setup">
       <div className="setup-copy">
-        <span className="section-kicker">A PLACE TO BEGIN</span>
-        <h2>
-          Good things{' '}
-          <br />
-          happen in a hive.
-        </h2>
+        <h2>Hive Connection</h2>
         <p>
-          Join your people, or bring them together.
+          Join your team or let them join you
           <br />
-          Your network starts with a single connection.
+          parallelize your compute
         </p>
         <div className="mini-comb-art" aria-hidden="true">
           <span />
@@ -66,45 +61,42 @@ export default function NetworkSetup({ onConnect, knownNetworks }) {
           <span />
           <span />
         </div>
-        <span className="setup-caption">Every node makes the network stronger.</span>
       </div>
       <div className="setup-form-panel">
         <div className="network-choices" aria-label="Choose how to connect">
           <button
-            className={mode === 'join' ? 'choice selected' : 'choice'}
-            onClick={() => chooseMode('join')}
-            aria-pressed={mode === 'join'}
+            className={mode === "join" ? "choice selected" : "choice"}
+            onClick={() => chooseMode("join")}
+            aria-pressed={mode === "join"}
           >
             <Icon name="network" />
             <strong>Join a network</strong>
-            <span>Find your existing hive</span>
           </button>
           <button
-            className={mode === 'create' ? 'choice selected' : 'choice'}
-            onClick={() => chooseMode('create')}
-            aria-pressed={mode === 'create'}
+            className={mode === "create" ? "choice selected" : "choice"}
+            onClick={() => chooseMode("create")}
+            aria-pressed={mode === "create"}
           >
             <Icon name="plus" />
             <strong>Create a network</strong>
-            <span>Make room for your people</span>
           </button>
         </div>
         <form onSubmit={submit}>
-          <h3>{mode === 'join' ? 'Let’s get you connected.' : 'Make it your own.'}</h3>
-          <p className="form-description">
-            {mode === 'join'
-              ? 'Enter the network ID and password shared with you.'
-              : 'Choose a name and a password to share with your group.'}
-          </p>
-          <label htmlFor="network-name">{mode === 'join' ? 'Network ID' : 'Network name'}</label>
+          <label htmlFor="network-name">
+            {mode === "join" ? "Network ID" : "Network name"}
+          </label>
           <input
             id="network-name"
             value={networkName}
             onChange={(event) => {
-              setNetworkName(event.target.value)
-              setError('')
+              setNetworkName(event.target.value);
+              setError("");
             }}
-            placeholder={mode === 'join' ? 'e.g. HIVE-8F2A1B3C' : 'e.g. The garden collective'}
+            placeholder={
+              mode === "join"
+                ? "e.g. HIVE-8F2A1B3C"
+                : "e.g. Team Hive"
+            }
             maxLength={64}
             required
             autoComplete="off"
@@ -113,21 +105,23 @@ export default function NetworkSetup({ onConnect, knownNetworks }) {
           <div className="password-input">
             <input
               id="network-password"
-              type={showPassword ? 'text' : 'password'}
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(event) => {
-                setPassword(event.target.value)
-                setError('')
+                setPassword(event.target.value);
+                setError("");
               }}
               placeholder="At least 8 characters"
               minLength={8}
               maxLength={128}
               required
-              autoComplete={mode === 'create' ? 'new-password' : 'current-password'}
+              autoComplete={
+                mode === "create" ? "new-password" : "current-password"
+              }
             />
             <button
               type="button"
-              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-label={showPassword ? "Hide password" : "Show password"}
               aria-pressed={showPassword}
               onClick={() => setShowPassword(!showPassword)}
             >
@@ -140,14 +134,11 @@ export default function NetworkSetup({ onConnect, knownNetworks }) {
             </p>
           )}
           <button className="button button-primary form-submit" type="submit">
-            {mode === 'join' ? 'Connect to network' : 'Create network'}
+            {mode === "join" ? "Connect to network" : "Create network"}
             <Icon name="arrow" />
           </button>
-          <p className="form-footnote">
-            <Icon name="lock" /> Share your network ID and password with your group.
-          </p>
         </form>
       </div>
     </div>
-  )
+  );
 }

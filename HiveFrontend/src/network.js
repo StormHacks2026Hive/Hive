@@ -105,19 +105,22 @@ export function createPreviewNodes(name) {
   ]
 }
 
-export function advancePreview(nodes, tick, { mode, accepting, capacity }) {
+export function killPreviewNode(nodes, nodeId) {
+  return nodes.map((node) => node.id === nodeId ? { ...node, status: 'offline', rate: 0 } : node)
+}
+
+export function advancePreview(nodes, tick, { mode }) {
   const phases = ['receiving', 'idle', 'sending', 'receiving', 'sending', 'idle']
   return nodes.map((node, index) => {
     if (node.status === 'offline' && !node.own) return node
-    let status =
+    const status =
       node.own && mode !== 'running'
         ? mode === 'off'
           ? 'offline'
           : 'paused'
         : phases[(tick + index * 2) % phases.length]
-    if (node.own && !accepting && status === 'receiving') status = 'idle'
     const rate = ['receiving', 'sending'].includes(status)
-      ? Number(((1.2 + ((tick + index) % 5) * 0.6) * (node.own ? capacity / 100 : 1)).toFixed(1))
+      ? Number((1.2 + ((tick + index) % 5) * 0.6).toFixed(1))
       : 0
     return {
       ...node,

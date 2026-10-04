@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { STATUS, formatData } from '../network.js'
-import { TreeArt, HexIcon, Icon } from './HiveScene.jsx'
-
-const hexPoints = '-36,-62 36,-62 72,0 36,62 -36,62 -72,0'
+import { HiveBody, HexIcon, Icon } from './HiveScene.jsx'
 
 export default function NodeMap({
   nodes,
@@ -10,29 +8,19 @@ export default function NodeMap({
   onPositionsChange,
   network,
   mode,
+  view,
+  onViewChange,
   onModeChange,
+  onKillNode,
   onNetworkTab,
 }) {
-  const [selectedId, setSelectedId] = useState('you')
-  const [filter, setFilter] = useState('all')
-  const [zoom, setZoom] = useState(1)
+  const { selectedId, filter, zoom } = view
+  const setSelectedId = (value) => onViewChange((current) => ({ ...current, selectedId: value }))
+  const setFilter = (value) => onViewChange((current) => ({ ...current, filter: value }))
+  const setZoom = (value) => onViewChange((current) => ({ ...current, zoom: typeof value === 'function' ? value(current.zoom) : value }))
   const [draggingId, setDraggingId] = useState(null)
   const world = useRef(null)
-  const scroll = useRef(null)
   const drag = useRef(null)
-  const [compact, setCompact] = useState(() => window.matchMedia('(max-width: 650px)').matches)
-
-  useEffect(() => {
-    const query = window.matchMedia('(max-width: 650px)')
-    const update = () => setCompact(query.matches)
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
-  }, [])
-  useEffect(() => {
-    if (compact && scroll.current) {
-      scroll.current.scrollLeft = (scroll.current.scrollWidth - scroll.current.clientWidth) / 2
-    }
-  }, [compact, network])
 
   const placedNodes = nodes.map((node) => ({ ...node, ...positions[node.id] }))
 
@@ -92,14 +80,9 @@ export default function NodeMap({
         <div className="empty-map-comb">
           <HexIcon />
         </div>
-        <h2>Your hive is waiting.</h2>
-        <p>
-          Connect to a network to see its nodes
-          <br />
-          and how data moves between them.
-        </p>
+        <h2>No network connected</h2>
         <button className="button button-primary" onClick={onNetworkTab}>
-          Find a network <Icon name="arrow" />
+          Connect <Icon name="arrow" />
         </button>
       </div>
     )
@@ -109,8 +92,7 @@ export default function NodeMap({
       <section className="map-panel" aria-labelledby="map-title">
         <div className="panel-header">
           <div>
-            <span className="section-kicker">THE BIGGER PICTURE</span>
-            <h2 id="map-title">Your network, connected.</h2>
+            <h2 id="map-title">{network.name}</h2>
           </div>
           <button
             className="button button-secondary reset-layout"
@@ -119,7 +101,7 @@ export default function NodeMap({
               setZoom(1)
             }}
           >
-            <Icon name="network" /> Reset combs
+            <Icon name="network" /> Reset
           </button>
         </div>
         <div className="map-toolbar">
@@ -144,23 +126,14 @@ export default function NodeMap({
           </span>
         </div>
         <div className="map-canvas">
-          <div className="map-scroll" ref={scroll}>
+          <div className="map-scroll">
             <svg
               className="node-map"
               viewBox="0 0 846 560"
               role="group"
               aria-label="Interactive honeycomb network map"
             >
-              <svg
-                width="846"
-                height="560"
-                viewBox="0 0 846 486"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-              >
-                <TreeArt />
-              </svg>
-              <g ref={world} transform={`translate(423 280) scale(${zoom}) translate(-423 -280)`}>
+              <g className="map-world" ref={world} transform={`translate(423 280) scale(${zoom}) translate(-423 -280)`}>
                 {placedNodes
                   .filter((node) => !node.own)
                   .map((node) => {
@@ -226,21 +199,21 @@ export default function NodeMap({
                         }
                       }}
                     >
-                      <polygon
+                      <ellipse
                         className="node-selection-ring"
-                        points="-40,-69 40,-69 80,0 40,69 -40,69 -80,0"
+                        rx="82" ry="87"
                       />
-                      <path className="node-hanger" d="M0-83V-63" />
-                      <polygon className="node-hex" points={hexPoints} />
-                      <path className="node-shine" d="m-31-53 59 0 17 30" />
-                      <text className="node-initials" y="-10" textAnchor="middle">
-                        {node.short}
-                      </text>
-                      <text className="node-name" y="11" textAnchor="middle">
+                      <path className="node-hanger" d="M0-94V-75" />
+                      <g className="node-hive" transform="scale(.39) translate(-200 -232)">
+                        <HiveBody doorRadius={140} shaded={false} />
+                      </g>
+                      <text className="node-name" y="-15" textAnchor="middle">
                         {node.own ? 'Your node' : node.name}
                       </text>
-                      <circle cy="31" cx="-26" r="3" fill={STATUS[node.status].color} />
-                      <text className="node-status-text" y="34" x="5" textAnchor="middle">
+                      <text className="node-rate" y="8" textAnchor="middle">
+                        {node.rate.toFixed(1)} MB/s
+                      </text>
+                      <text className="node-status-text" y="29" textAnchor="middle">
                         {STATUS[node.status].label}
                       </text>
                     </g>
@@ -268,7 +241,7 @@ export default function NodeMap({
               +
             </button>
           </div>
-          <span className="map-hint">Drag a comb · Arrow keys work too</span>
+          <span className="map-hint">Drag to move</span>
         </div>
         <div className="map-legend">
           {['receiving', 'sending', 'idle', 'paused', 'offline'].map((status) => (
@@ -279,26 +252,19 @@ export default function NodeMap({
           ))}
         </div>
       </section>
-      <aside className="node-inspector" aria-labelledby="inspector-title">
-        <span className="section-kicker">NODE DETAILS</span>
-        <div className={`inspector-comb ${selected.status}`}>
-          <HexIcon />
+      <aside className="node-inspector" key={selected.id} aria-labelledby="inspector-title">
+        <div className="inspector-heading">
+          <h2 id="inspector-title">{selected.name}</h2>
+          <p className="node-device">
+            {selected.device}
+            {selected.own && ' · You'}
+          </p>
+          <span className={`status-pill ${selected.status}`}>
+            <i />
+            {STATUS[selected.status].label}
+          </span>
         </div>
-        <h2 id="inspector-title">{selected.name}</h2>
-        <p className="node-device">
-          {selected.device}
-          {selected.own && ' · You'}
-        </p>
-        <span className={`status-pill ${selected.status}`}>
-          <i />
-          {STATUS[selected.status].label}
-        </span>
-        <p className="node-description">{STATUS[selected.status].detail}</p>
         <dl className="node-details">
-          <div>
-            <dt>Network</dt>
-            <dd>{network.name}</dd>
-          </div>
           <div>
             <dt>Transfer rate</dt>
             <dd>{selected.rate.toFixed(1)} MB/s</dd>
@@ -314,8 +280,8 @@ export default function NodeMap({
             </dd>
           </div>
         </dl>
-        {selected.own ? (
-          <div className="inspector-actions">
+        <div className="inspector-actions">
+          {selected.own && (
             <button
               className="button button-secondary"
               onClick={() => onModeChange(mode === 'running' ? 'paused' : 'running')}
@@ -323,22 +289,15 @@ export default function NodeMap({
               <Icon name={mode === 'running' ? 'pause' : 'play'} />
               {mode === 'running' ? 'Pause node' : mode === 'off' ? 'Start node' : 'Resume node'}
             </button>
-            {mode !== 'off' && (
-              <button className="text-button danger-text" onClick={() => onModeChange('off')}>
-                <Icon name="power" />
-                Turn off node
-              </button>
-            )}
-          </div>
-        ) : (
-          <p className="inspector-note">
-            This node belongs to another member.
-            <br />
-            You can view its activity here.
-          </p>
-        )}
-        <div className="inspector-footer">
-          <span className="little-dot" /> Activity updates every 3 seconds
+          )}
+          <button
+            className="button button-danger"
+            onClick={() => onKillNode(selected.id)}
+            disabled={selected.status === 'offline'}
+          >
+            <Icon name="power" />
+            Kill node
+          </button>
         </div>
       </aside>
     </div>
