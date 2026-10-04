@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Icon } from './HiveScene.jsx'
 
-export default function NetworkSetup({ onConnect, knownNetworks, onRestore }) {
+export default function NetworkSetup({ onConnect, knownNetworks, onRestore, initialNetworkId = '' }) {
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState('join')
-  const [networkName, setNetworkName] = useState('')
+  const [networkName, setNetworkName] = useState(initialNetworkId)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
@@ -105,6 +105,7 @@ export default function NetworkSetup({ onConnect, knownNetworks, onRestore }) {
               placeholder="At least 8 characters"
               minLength={8}
               maxLength={128}
+              autoFocus={Boolean(initialNetworkId)}
               required
               autoComplete={
                 mode === "create" ? "new-password" : "current-password"

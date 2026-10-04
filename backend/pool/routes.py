@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from ..models import JobCreated
 from .models import (Incoming, Register, Registered, RequestChunk, Heartbeat,
     Control, ChunkError, ChunkStarted, Subscribe, JobStatus, WorkerStatus, Manifest)
-from .coordinator import Coordinator, SHADER, SHADER_ID
+from .coordinator import CapacityError, Coordinator, SHADER, SHADER_ID
 from .workloads import JobSubmission, OnnxAnalysisRequest, onnx_plan
 from .image_workloads import ImageAnalysisRequest, ImageAnalysis, analyze_image
 from ..marked_python import AnalysisRequest, Analysis, analyze_marked
@@ -42,7 +42,7 @@ async def create_job(request: JobSubmission, http: Request):
             return JobCreated(job_id=pool.create(request, plan=plan, network_id=network_id, owner_id=user.id if user else None).job_id)
         return JobCreated(job_id=pool.create(request, network_id=network_id, owner_id=user.id if user else None).job_id)
     except ValueError as exc:
-        raise HTTPException(429 if 'retained' in str(exc) else 422, str(exc)) from exc
+        raise HTTPException(429 if isinstance(exc, CapacityError) else 422, str(exc)) from exc
 
 @router.get('/jobs/{job_id}', response_model=JobStatus)
 async def status(job_id: str, request: Request):

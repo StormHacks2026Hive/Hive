@@ -7,6 +7,7 @@ import NodeWork from './NodeWork.jsx'
 import useUITransition from '../useUITransition.js'
 import useNetwork from '../useNetwork.js'
 import ComputePanel from './ComputePanel.jsx'
+import NetworkInvite from './NetworkInvite.jsx'
 
 function ConfirmDialog({ type, nodeName, onClose, onConfirm }) {
   const dialog = useRef(null)
@@ -47,13 +48,16 @@ function ConfirmDialog({ type, nodeName, onClose, onConfirm }) {
   )
 }
 
-export default function Dashboard({ user, initialState, onWorkspaceChange, onSignOut, headingRef }) {
-  const [tab, setTab] = useState(initialState?.tab || 'network')
+export default function Dashboard({ user, initialState, invitedNetwork, onInviteJoined, onWorkspaceChange, onSignOut, headingRef }) {
+  const [tab, setTab] = useState(invitedNetwork ? 'network' : initialState?.tab || 'network')
+  const [pendingInvite, setPendingInvite] = useState(invitedNetwork || '')
+  const [startingNetwork] = useState(invitedNetwork ? { id: invitedNetwork } : initialState?.network)
+  const [sharing, setSharing] = useState(false)
   const [positions, setPositions] = useState(initialState?.positions || {})
   const [mapView, setMapView] = useState(initialState?.mapView || { selectedId: 'you', filter: 'all', zoom: 1 })
   const [notice, setNotice] = useState(''), [confirm, setConfirm] = useState(null)
   const transition = useUITransition()
-  const live = useNetwork(user, initialState?.network)
+  const live = useNetwork(user, startingNetwork)
   const { network, knownNetworks } = live
   const rawNodes = network ? live.snapshot.nodes : []
   const ordered = [...rawNodes].sort((a, b) => Number(b.id === live.ownId) - Number(a.id === live.ownId) || a.id.localeCompare(b.id))
@@ -68,6 +72,13 @@ export default function Dashboard({ user, initialState, onWorkspaceChange, onSig
   const events = live.snapshot.jobs.slice(-5).reverse().map(job => ({ id: job.job_id, message: `${job.kind} · ${job.status} · ${job.completed_chunks}/${job.total_chunks}`, icon: 'network', time: '' }))
   const onlineCount = nodes.filter(node => node.status !== 'offline').length
   const receivingCount = nodes.filter(node => ['receiving', 'working'].includes(node.status)).length
+
+  useEffect(() => {
+    if (pendingInvite && network?.id) {
+      setPendingInvite('')
+      onInviteJoined()
+    }
+  }, [network?.id, pendingInvite, onInviteJoined])
 
   useEffect(() => {
     if (live.ready) onWorkspaceChange({ tab, network, positions, mapView })
@@ -185,7 +196,7 @@ export default function Dashboard({ user, initialState, onWorkspaceChange, onSig
           {live.error && <p className="form-error" role="alert">{live.error}</p>}
           {tab === 'compute' && network ? <ComputePanel network={network} nodes={nodes} onControl={control} onKillNode={id => setConfirm({ type: 'kill', nodeId: id })} /> : tab === 'network' ? (
             !network ? (
-              <NetworkSetup onConnect={connect} knownNetworks={knownNetworks} onRestore={n => transition(() => live.restore(n), { page: true })} />
+              <NetworkSetup initialNetworkId={pendingInvite} onConnect={connect} knownNetworks={knownNetworks} onRestore={n => transition(() => live.restore(n), { page: true })} />
             ) : (
               <>
                 <section className="connected-network panel" aria-labelledby="network-title">
@@ -205,6 +216,9 @@ export default function Dashboard({ user, initialState, onWorkspaceChange, onSig
                     </div>
                   </div>
                   <div className="network-header-actions">
+                    <button className="button button-secondary" onClick={() => setSharing(true)}>
+                      Invite via QR
+                    </button>
                     <button
                       className="button button-secondary"
                       aria-label="Leave network"
@@ -332,6 +346,7 @@ export default function Dashboard({ user, initialState, onWorkspaceChange, onSig
           </footer>
         </main>
       </div>
+      {sharing && network && <NetworkInvite network={network} onClose={() => setSharing(false)} />}
       {notice && (
         <div className="toast" role="status">
           <Icon name="check" />

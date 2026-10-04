@@ -13,6 +13,9 @@ from .models import (Assignment, Tile, AcceptedTile, WorkerStatus,
 SHADER = Path(__file__).with_name('mandelbrot.wgsl').read_bytes()
 SHADER_ID = hashlib.sha256(SHADER).hexdigest()
 
+class CapacityError(ValueError):
+    """A valid workload cannot currently fit in the coordinator."""
+
 @dataclass
 class Chunk:
     chunk_id: str
@@ -67,17 +70,50 @@ class Worker:
     phase: str = 'idle'
 
 class Coordinator:
-    def __init__(self, lease=15, heartbeat_timeout=20, max_attempts=4):
+    def __init__(self, lease=15, heartbeat_timeout=20, max_attempts=4,
+                 max_retained_jobs=16, max_retained_bytes=134_217_728):
         self.jobs = {}
         self.workers = {}
         self.watchers = {}
         self.lease = lease
         self.heartbeat_timeout = heartbeat_timeout
         self.max_attempts = max_attempts
+        self.max_retained_jobs = max_retained_jobs
+        self.max_retained_bytes = max_retained_bytes
+
+    @staticmethod
+    def retained_bytes(job):
+        # Active jobs reserve their future chunk copies as well as the image.
+        return len(job.image) + sum(len(a) for a in job.assets.values()) + sum(
+            len(c.output) if c.output is not None else
+            c.byte_length if job.status in ('queued', 'running') else 0
+            for c in job.chunks)
+
+    def reclaim_results(self, incoming_bytes):
+        """Plan eviction before mutating the cache; never evict active leases."""
+        if incoming_bytes > self.max_retained_bytes:
+            raise CapacityError('Job exceeds the retained result storage limit')
+        busy = {w.busy[0] for w in self.workers.values() if w.busy}
+        candidates = sorted((j for j in self.jobs.values()
+            if j.status in ('done', 'failed', 'cancelled') and j.finished_at is not None
+            and j.job_id not in busy and not self.watchers.get(j.job_id)),
+            key=lambda j: j.finished_at)
+        count, size = len(self.jobs), sum(self.retained_bytes(j) for j in self.jobs.values())
+        evict = []
+        for job in candidates:
+            if count < self.max_retained_jobs and size + incoming_bytes <= self.max_retained_bytes:
+                break
+            evict.append(job.job_id)
+            count -= 1
+            size -= self.retained_bytes(job)
+        if count >= self.max_retained_jobs:
+            raise CapacityError('Job capacity reached; cancel queued/running jobs or close other result subscriptions')
+        if size + incoming_bytes > self.max_retained_bytes:
+            raise CapacityError('Result storage is full with active jobs or subscribed results; cancel jobs or close other result subscriptions')
+        for job_id in evict:
+            self.jobs.pop(job_id)
 
     def create(self, request, plan=None, network_id=None, owner_id=None):
-        if len(self.jobs) >= 16:
-            raise ValueError('16 retained jobs maximum; wait for 30-minute result expiry')
         from .workloads import AnimationRequest, WGSLRequest, PythonRequest, compute_plan, onnx_plan
         if request.kind in ('mandelbrot', 'animation'):
             frames = request.frames if isinstance(request, AnimationRequest) else [request.parameters]
@@ -114,8 +150,9 @@ class Coordinator:
             chunks = [Chunk(tile=None, **c) for c in plan['chunks']]
             job = Job(uuid4().hex, request, chunks, bytearray(plan['size']), assets=plan['assets'],
                 output_format=plan['output_format'], output_shape=plan['output_shape'])
-        if sum(len(j.image) + sum(len(a) for a in j.assets.values()) for j in self.jobs.values()) + len(job.image) + sum(len(a) for a in job.assets.values()) > 134_217_728:
-            raise ValueError('128 MiB retained output/asset capacity reached; wait for result expiry')
+        # Reserve room for the assembled image and per-chunk result copies.
+        incoming_bytes = self.retained_bytes(job)
+        self.reclaim_results(incoming_bytes)
         job.network_id, job.owner_id = network_id, owner_id
         if plan:
             job.reduction, job.initial = plan.get('reduction'), plan.get('initial')
@@ -408,7 +445,7 @@ class Coordinator:
                 except Exception:
                     pass
         for job_id, job in list(self.jobs.items()):
-            if job.finished_at and now-job.finished_at > 1800 and not self.watchers.get(job_id):
+            if job.finished_at is not None and now-job.finished_at > 1800 and not self.watchers.get(job_id) and not any(w.busy and w.busy[0] == job_id for w in self.workers.values()):
                 self.jobs.pop(job_id)
 
     async def run(self):

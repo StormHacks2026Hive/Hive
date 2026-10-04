@@ -23,4 +23,5 @@ test('spec labels distinguish reported capacity from exact hardware identity', (
   assert.ok(specs.some(s => s.includes('128 MiB')))
   assert.ok(specs.some(s => s.includes('8192 × 8192')))
   assert.ok(nodeSpecs({ webgpu: true }).includes('GPU: Model hidden by browser'))
+  assert.ok(nodeSpecs({webgpu:true,benchmark:{pixels:4096,elapsed_ms:2.345}}).includes('GPU probe: 4096 pixels in 2.35 ms (dispatch + readback)'))
 })

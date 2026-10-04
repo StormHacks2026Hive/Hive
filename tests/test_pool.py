@@ -4,7 +4,7 @@ import struct
 import time
 import pytest
 from fastapi.testclient import TestClient
-from backend.pool.coordinator import Coordinator
+from backend.pool.coordinator import CapacityError, Coordinator
 from backend.pool.models import JobRequest, Register, ResultHeader
 from backend.pool.protocol import decode_result
 
@@ -135,6 +135,51 @@ def test_job_limits_and_expiry():
     with pytest.raises(ValueError): pool.create(JobRequest())
     job=next(iter(pool.jobs.values())); pool.finish(job,'cancelled'); job.finished_at=time.monotonic()-1801
     asyncio.run(pool.sweep()); assert len(pool.jobs)==15
+
+
+def test_terminal_results_are_reclaimed_instead_of_blocking_new_jobs():
+    pool = Coordinator(max_retained_jobs=2)
+    oldest = pool.create(JobRequest())
+    pool.finish(oldest, 'done')
+    newer = pool.create(JobRequest())
+    pool.finish(newer, 'cancelled')
+    latest = pool.create(JobRequest())
+    assert oldest.job_id not in pool.jobs
+    assert newer.job_id in pool.jobs and latest.job_id in pool.jobs
+    for _ in range(25):
+        pool.finish(latest, 'done')
+        latest = pool.create(JobRequest())
+    assert len(pool.jobs) == 2
+
+
+def test_capacity_preserves_subscribed_results_and_cancelled_live_leases():
+    pool = Coordinator(max_retained_jobs=1)
+    job = pool.create(JobRequest())
+    pool.finish(job, 'done')
+    pool.watchers[job.job_id] = {asyncio.Queue()}
+    with pytest.raises(CapacityError): pool.create(JobRequest())
+    assert job.job_id in pool.jobs
+    pool.watchers.clear()
+    running = pool.create(JobRequest())
+    worker = add_worker(pool)
+    pool.pull(worker)
+    pool.finish(running, 'cancelled')
+    with pytest.raises(CapacityError): pool.create(JobRequest())
+    asyncio.run(pool.sweep())
+    pool.create(JobRequest())
+    assert running.job_id not in pool.jobs
+
+
+def test_result_memory_pressure_reclaims_only_when_submission_can_fit():
+    pool = Coordinator(max_retained_bytes=3 * 1048576)
+    old = pool.create(JobRequest())  # Image plus reserved chunk copies = 2 MiB.
+    pool.finish(old, 'cancelled')  # Uncomputed chunk copies are no longer reserved.
+    active = pool.create(JobRequest())
+    with pytest.raises(CapacityError): pool.create(JobRequest())
+    assert set(pool.jobs) == {old.job_id, active.job_id}
+    pool.finish(active, 'cancelled')
+    incoming = pool.create(JobRequest())
+    assert set(pool.jobs) == {active.job_id, incoming.job_id}
 
 
 def test_http_and_binary_websocket(monkeypatch):

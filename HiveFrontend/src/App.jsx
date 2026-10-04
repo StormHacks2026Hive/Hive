@@ -5,6 +5,7 @@ import Dashboard from './components/Dashboard.jsx'
 import { clearSession, loadSession, saveSession } from './session.js'
 import useUITransition from './useUITransition.js'
 import { api, authConfig } from './api.js'
+import { clearInvite, readInvite } from './invite.js'
 
 function App() {
   const [saved, setSaved] = useState(loadSession)
@@ -14,13 +15,21 @@ function App() {
   const [error, setError] = useState('')
   const [retry, setRetry] = useState(0)
   const [guestBusy, setGuestBusy] = useState(false)
+  const [invitation, setInvitation] = useState(() => readInvite(window.location.search))
+  const startupInvite = useRef(invitation)
+  const initialSession = useRef(null)
   const heading = useRef(null)
   const savingEnabled = useRef(Boolean(saved?.user))
   const transition = useUITransition()
 
   useEffect(() => {
     let active = true
-    Promise.all([authConfig(), api('/auth/me')]).then(([config, session]) => {
+    if (!initialSession.current) initialSession.current = Promise.all([authConfig(), api('/auth/me')])
+      .then(async ([config, session]) => {
+        if (!session.user && startupInvite.current?.guest) session = await api('/auth/guest', {})
+        return [config, session]
+      })
+    initialSession.current.then(([config, session]) => {
       if (!active) return
       setClientId(config.client_id)
       setUser(session.user)
@@ -31,6 +40,11 @@ function App() {
     const expired = () => { savingEnabled.current = false; clearSession(); setUser(null); setStage('login'); setError('Your session ended. Sign in again.') }
     window.addEventListener('hive:unauthorized', expired)
     return () => { active = false; window.removeEventListener('hive:unauthorized', expired) }
+  }, [])
+
+  const consumeInvite = useCallback(() => {
+    clearInvite()
+    setInvitation(null)
   }, [])
 
   const saveWorkspace = useCallback((workspace) => {
@@ -82,6 +96,7 @@ function App() {
 
   if (stage === 'app') return (
     <Dashboard user={user} initialState={saved?.user.id === user.id ? saved.workspace : null}
+      invitedNetwork={invitation?.networkId} onInviteJoined={consumeInvite}
       onWorkspaceChange={saveWorkspace} onSignOut={signOut} headingRef={heading} />
   )
 

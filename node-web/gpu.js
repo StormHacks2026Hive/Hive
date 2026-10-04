@@ -230,9 +230,13 @@ export class TileGPU {
   async benchmark(shaderId) {
     const chunk = { shader_id: shaderId, tile: { x: 192, y: 192, width: 64, height: 64 },
       image: { width: 512, height: 512 }, parameters: { xmin: -2, xmax: 1, ymin: -1.5, ymax: 1.5, max_iterations: 256 } };
-    await this.render(chunk); // warm shader/pipeline before measuring
-    const result = await this.render(chunk);
-    return { version: 'mandelbrot-v1', pixels: 4096, elapsed_ms: result.elapsed_ms };
+    // Warm the pipeline/device, then reduce one-off scheduling/readback noise.
+    await this.render(chunk);
+    await this.render(chunk);
+    const samples = [];
+    for (let i = 0; i < 5; i++) samples.push((await this.render(chunk)).elapsed_ms);
+    samples.sort((a, b) => a - b);
+    return { version: 'mandelbrot-v1', pixels: 4096, elapsed_ms: samples[2] };
   }
   destroy() {
     for (const session of this.sessions?.values() || []) session.release().catch(() => {});

@@ -195,7 +195,15 @@ a { color: inherit; }
 .network-id { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 13px; margin-top: 5px; }
 .network-id > span { overflow-wrap: anywhere; }
 .network-id .icon-button { color: var(--ink); flex-shrink: 0; }
-.network-header-actions { flex-shrink: 0; }
+.network-header-actions { flex-shrink: 0; display: flex; gap: 8px; }
+.network-invite { width: min(390px, calc(100vw - 32px)); padding: 30px 24px 24px; text-align: center; }
+.network-invite h2 { padding: 0 20px; overflow-wrap: anywhere; }
+.invite-close { position: absolute; top: 8px; right: 8px; }
+.invite-qr { display: block; width: min(240px, 100%); height: auto; margin: 20px auto 12px; border: 2px solid var(--ink); border-radius: 8px; }
+.network-invite p { margin: 0 0 8px; }
+.invite-url { display: block; color: var(--ink); font-weight: 700; }
+.invite-network-id { display: block; font-size: 12px; margin: 8px 0 18px; }
+.network-invite > .button { margin: 0 auto; }
 .is-connected .button-secondary { background: var(--honey-light); border: 2px solid var(--ink); border-radius: 13px 10px 15px 9px; box-shadow: 0 2px 0 var(--bark); }
 .is-connected .button-secondary:hover { background: var(--honey); }
 .stats-row { flex-shrink: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 124px)); justify-content: center; gap: 16px; margin: 0; }
@@ -323,6 +331,7 @@ a { color: inherit; }
 .toast .icon-button { width: 25px; height: 25px; padding: 5px; flex-shrink: 0; }
 .confirm-dialog { animation: panel-in .3s var(--motion-ease) both; width: min(430px, calc(100vw - 36px)); border: 2px solid var(--ink); background: var(--paper); color: var(--ink); border-radius: 18px; padding: 32px; box-shadow: 0 25px 90px #5943222b; }
 .confirm-dialog::backdrop { animation: content-in .25s ease both; background: #294f4bcc; }
+.network-invite { position: fixed; inset: 0; margin: auto; max-height: calc(100svh - 32px); overflow: auto; }
 .dialog-icon { width: 42px; height: 42px; background: #ffe1b2; color: #b44b00; border-radius: 50%; display: grid; place-items: center; margin-bottom: 18px; }
 .dialog-icon svg { width: 20px; height: 20px; }
 .confirm-dialog h2 { font-size: 23px; }
@@ -433,7 +442,7 @@ a { color: inherit; }
   .choice { padding: 14px; }
   .choice > span { font-size: 11px; }
   .network-detail-grid { min-height: 290px; grid-template-columns: 1fr; grid-template-rows: minmax(190px, 1fr) minmax(84px, .36fr); gap: 10px; }
-  .connected-network { padding: 7px 14px; gap: 10px; border-radius: 24px 30px 22px 28px; }
+  .connected-network { padding: 7px 14px; gap: 10px; flex-wrap: wrap; border-radius: 24px 30px 22px 28px; }
   .network-header-actions .button { padding: 9px; font-size: 11px; }
   .network-identity { gap: 10px; }
   .network-identity h2 { font-size: 12px; }

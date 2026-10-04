@@ -23,6 +23,7 @@ from .marked_python import convert_loop
 from .models import Model, TypedArray
 from .networks import access
 from .pool import routes as pool_routes
+from .pool.coordinator import CapacityError
 from .pool.image_workloads import (
     ImageAnalysisRequest,
     WGSLImageRequest,
@@ -543,7 +544,7 @@ async def submit(network_id: str, payload: ProgramRequest, request: Request):
     ) as exc:
         for job in created:
             pool_routes.pool.jobs.pop(job["job_id"], None)
-        raise HTTPException(422, str(exc)) from exc
+        raise HTTPException(429 if isinstance(exc, CapacityError) else 422, str(exc)) from exc
 
 
 @router.get("/runs")

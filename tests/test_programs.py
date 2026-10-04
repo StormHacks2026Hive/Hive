@@ -433,6 +433,27 @@ def test_guests_create_join_submit_and_keep_network_isolation(pool):
         assert owner.get(f"/api/networks/{network_id}").json()["nodes"][0]["id"] == node["id"]
 
 
+def test_submission_capacity_returns_429_and_reclaims_cancelled_results(pool):
+    from backend.main import app
+
+    pool.max_retained_jobs = 1
+    with TestClient(app) as client:
+        headers = login(client)
+        network_id = client.post('/api/networks', json={'name': 'Capacity hive', 'password': 'test-password'}, headers=headers).json()['id']
+        path = f'/api/networks/{network_id}/runs'
+        payload = {'source': CPU, 'filename': 'cpu.py', 'input': TypedArray.encode([1, 2]).model_dump()}
+        first = client.post(path, json=payload, headers=headers)
+        assert first.status_code == 202
+        job_id = first.json()['jobs'][0]['job_id']
+        blocked = client.post(path, json=payload, headers=headers)
+        assert blocked.status_code == 429
+        assert job_id in pool.jobs
+        assert client.post(f'/pool/jobs/{job_id}/cancel', json={}, headers=headers).status_code == 200
+        replacement = client.post(path, json=payload, headers=headers)
+        assert replacement.status_code == 202
+        assert job_id not in pool.jobs
+
+
 def test_popular_gpu_bonus_is_small_and_cpu_scores_are_separate(pool):
     caps = dict(CAPABILITIES, cpu_score=3, adapter={"vendor": "popular"})
     a = pool.register(

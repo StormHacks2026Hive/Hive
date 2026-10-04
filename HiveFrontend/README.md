@@ -61,6 +61,13 @@ Signing out or clearing cookies ends access to that guest identity; a new guest
 session cannot recover its previous networks. Google sign-in remains available.
 On the map, your device is the hive and other devices are bees.
 
+On the connected Network page, **Invite via QR** opens a locally generated QR
+code and copyable link to `https://hivehacks.tech/?join=NETWORK_ID&guest=1`.
+Scanning starts a guest session if needed and pre-fills the join form; the guest
+must enter the network password. Existing signed-in users keep their account.
+The password is never put in the link or QR code. The invite parameters are
+removed after a successful connection so refresh restores the joined workspace.
+
 1. Sign in with Google or choose **Continue as guest**, create a password-protected network, and share its ID.
 2. Other users sign in and join with that ID and password. Each browser enrolls
    a persistent device and automatically contributes while its tab is visible.
@@ -86,7 +93,19 @@ SQLite at `data/hive.sqlite3` persists users, hashed sessions, salted scrypt
 network passwords, memberships, devices, counters and submission history.
 `HIVE_DB_PATH` overrides the path. Local storage keeps only view preferences.
 Results and active leases remain in memory; old results become unavailable after
-expiry or a server restart, while network/device history remains saved.
+expiry or a server restart, while network/device history remains saved. Results
+normally expire after 30 minutes. When the 16-job or 128 MiB result cache fills,
+the oldest finished, failed or cancelled results without a live subscription or
+lease are reclaimed early. Active jobs are protected; the byte budget includes
+assembled outputs and per-chunk result copies. Download results you want to keep.
+
+GPU shares use a warmed Mandelbrot probe: the median of five timed 4096-pixel
+tiles, including dispatch and readback. The score is pixels per second, with an
+8% bonus for a most-common GPU family represented by at least two active nodes,
+then normalized over the network. Expand Device specs to compare probe timings.
+This is a workload proxy, not GPU utilization or a hardware-model ranking. CPU
+shares use a separate single-worker integer benchmark. GPU work still needs CPU
+time for dispatch, buffer copies, networking and displaying results.
 
 ## Limits
 
