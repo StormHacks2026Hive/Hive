@@ -48,7 +48,7 @@ export default function NetworkSetup({ onConnect, knownNetworks }) {
       <div className="setup-copy">
         <span className="section-kicker">A PLACE TO BEGIN</span>
         <h2>
-          Good things
+          Good things{' '}
           <br />
           happen in a hive.
         </h2>

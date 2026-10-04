@@ -7,6 +7,7 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
 
   useEffect(() => {
     let active = true
+    let resizeObserver
     const container = button.current
     loadGoogle()
       .then((google) => {
@@ -24,14 +25,24 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
             }
           },
         })
-        google.renderButton(container, {
-          type: 'standard',
-          theme: 'outline',
-          size: 'large',
-          shape: 'pill',
-          text: 'continue_with',
-          width: Math.min(240, container.parentElement.clientWidth),
-        })
+        let lastWidth = 0
+        const renderButton = () => {
+          const width = Math.min(240, Math.floor(container.parentElement.clientWidth))
+          if (width === lastWidth) return
+          lastWidth = width
+          container.replaceChildren()
+          google.renderButton(container, {
+            type: 'standard',
+            theme: 'outline',
+            size: 'large',
+            shape: 'rectangular',
+            text: 'continue_with',
+            width,
+          })
+        }
+        renderButton()
+        resizeObserver = new ResizeObserver(renderButton)
+        resizeObserver.observe(container.parentElement)
         setBusy(false)
       })
       .catch((err) => {
@@ -42,6 +53,7 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
       })
     return () => {
       active = false
+      resizeObserver?.disconnect()
       container.replaceChildren()
     }
   }, [clientId, onSignIn, onError])
@@ -50,7 +62,7 @@ export default function GoogleSignIn({ clientId, onSignIn, onError }) {
     <div className="signin-area" aria-busy={busy}>
       <div ref={button} className={busy ? 'google-button busy' : 'google-button'} inert={busy} />
       <p className="note" role="status">
-        {busy ? 'Loading Google sign-in…' : 'Sign in to get buzzing.'}
+        {busy ? 'Loading Google sign-in…' : 'Your Google account is all you need.'}
       </p>
     </div>
   )

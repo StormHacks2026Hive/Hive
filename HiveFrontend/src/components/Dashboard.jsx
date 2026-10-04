@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { advancePreview, createPreviewNodes, formatData, STATUS } from '../network.js'
-import HiveScene, { Bee, HexIcon, Icon } from './HiveScene.jsx'
+import { HexIcon, Icon } from './HiveScene.jsx'
 import NetworkSetup from './NetworkSetup.jsx'
 import NodeMap from './NodeMap.jsx'
 
@@ -181,7 +181,6 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
 
   return (
     <div className="app-shell">
-      <HiveScene />
       <aside className="sidebar">
         <a className="brand" href="/" aria-label="Hive home">
           <HexIcon /> hive<span className="brand-dot">.</span>
@@ -271,7 +270,7 @@ export default function Dashboard({ user, onSignOut, headingRef }) {
               </p>
             </div>
             <div className="page-heading-comb" aria-hidden="true">
-              <Bee />
+              <HexIcon />
             </div>
           </div>
           {tab === 'network' ? (

@@ -80,7 +80,7 @@ export function Icon({ name, ...props }) {
   )
 }
 
-// The same illustrated tree is used behind the login hive and the node garden.
+// The same illustrated tree is used behind the login hive and the node map.
 export function TreeArt() {
   return (
     <>
@@ -126,37 +126,6 @@ export function TreeArt() {
   )
 }
 
-export function Bee({ className = '' }) {
-  return (
-    <svg className={className} viewBox="0 0 80 65" fill="none" aria-hidden="true">
-      <ellipse
-        cx="29"
-        cy="22"
-        rx="12"
-        ry="19"
-        fill="#f7ecd4"
-        stroke="#594322"
-        strokeWidth="2"
-        transform="rotate(-27 29 22)"
-      />
-      <ellipse
-        cx="48"
-        cy="20"
-        rx="12"
-        ry="19"
-        fill="#f7ecd4"
-        stroke="#594322"
-        strokeWidth="2"
-        transform="rotate(27 48 20)"
-      />
-      <ellipse cx="40" cy="40" rx="27" ry="17" fill="#eea10a" stroke="#594322" strokeWidth="2.5" />
-      <path d="M28 25v29m14-30v32" stroke="#594322" strokeWidth="9" />
-      <circle cx="57" cy="35" r="3" fill="#594322" />
-      <path d="m61 23 4-9M19 39l-8 2" stroke="#594322" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
 export function HangingHive() {
   return (
     <svg className="hive-illustration" viewBox="0 0 400 450" aria-hidden="true">
@@ -188,10 +157,11 @@ export function HangingHive() {
           d="M15 231c0-57 62-96 185-96s185 39 185 96c0 73-37 91-185 91S15 304 15 231Z"
           fill="none"
         />
-        <circle className="hive-door" cx="200" cy="232" r="113" fill="#eea10a" strokeWidth="2" />
+        <circle className="hive-door" cx="200" cy="232" r="113" fill="#ffd16a" strokeWidth="2" />
         <path
+          className="hive-door-shade"
           d="M211 120c105 15 133 158 26 221 121-33 119-208-26-221Z"
-          fill="#ca850a"
+          fill="#eea10a"
           stroke="none"
         />
       </g>

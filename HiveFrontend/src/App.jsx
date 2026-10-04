@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import GoogleSignIn from './components/GoogleSignIn.jsx'
-import HiveScene, { Bee, HangingHive, HexIcon, Icon } from './components/HiveScene.jsx'
+import HiveScene, { HangingHive, HexIcon, Icon } from './components/HiveScene.jsx'
 import Dashboard from './components/Dashboard.jsx'
 
 const clientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim()
@@ -45,13 +45,14 @@ function App() {
         <a className="brand" href="/" aria-label="Hive home">
           <HexIcon /> hive<span className="brand-dot">.</span>
         </a>
-        <span>A little power. A bigger possibility.</span>
+        <span>Shared power. Sweet possibilities.</span>
       </header>
       <main className="login-main">
         <section className="login-comb" aria-labelledby="login-title">
           <HangingHive />
           <div className="login-content">
             <h1 id="login-title">Find your hive.</h1>
+            <p className="login-intro">A home for your shared computing power.</p>
             {stage === 'opening' ? (
               <div className="entering-message" role="status">
                 <Icon name="check" /> Welcome in, {user.name.split(' ')[0]}.
@@ -85,9 +86,7 @@ function App() {
             )}
           </div>
         </section>
-        <Bee className="login-bee bee-one" />
-        <Bee className="login-bee bee-two" />
-        <p className="login-bottom-note">A little honey. A lot of possibility.</p>
+        <div className="honey-swatches" aria-hidden="true"><span /><span /><span /></div>
       </main>
       <footer className="login-footer">
         <span>A home for shared computing.</span>
