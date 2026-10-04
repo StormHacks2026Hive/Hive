@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, network_id TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, network_id TEXT NOT NULL REFERENCES networks(id), user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, jobs TEXT NOT NULL, created REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS nodes_network ON nodes(network_id);
 CREATE INDEX IF NOT EXISTS runs_network ON runs(network_id,created);
+CREATE TABLE IF NOT EXISTS run_inputs (run_id TEXT PRIMARY KEY REFERENCES runs(id), payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, network_id TEXT NOT NULL REFERENCES networks(id), user_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL, permission TEXT NOT NULL, created REAL NOT NULL, expires REAL NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS task_timers (id TEXT PRIMARY KEY, network_id TEXT NOT NULL REFERENCES networks(id), user_id TEXT NOT NULL REFERENCES users(id), run_id TEXT NOT NULL REFERENCES runs(id), name TEXT NOT NULL, interval_seconds INTEGER NOT NULL, next_run REAL NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, last_run_id TEXT, last_fired REAL, last_error TEXT NOT NULL DEFAULT '', created REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS timers_due ON task_timers(enabled,next_run);
 """
 
 
@@ -53,6 +57,15 @@ def query(sql, params=(), *, one=False):
 def execute(sql, params=()):
     with connection() as db:
         db.execute(sql, params)
+
+
+def save_run(network_id, user_id, name, jobs, payload):
+    run_id = uuid4().hex
+    with connection() as conn:
+        conn.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',
+                     (run_id, network_id, user_id, name, json.dumps(jobs), time.time()))
+        conn.execute('INSERT INTO run_inputs VALUES(?,?)', (run_id, json.dumps(payload)))
+    return run_id
 
 
 def upsert_user(user):

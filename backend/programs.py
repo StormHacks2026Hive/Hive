@@ -6,11 +6,9 @@ import json
 import logging
 import math
 import re
-import time
 import tokenize
 from types import SimpleNamespace
 from typing import Any, Literal
-from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import Field
@@ -31,7 +29,7 @@ from .pool.image_workloads import (
     image_plan,
 )
 from .pool.workloads import AnimationRequest, WGSLRequest, compute_plan
-from .wgsl_analyzer import WGSLAnalysisRequest, analyze_wgsl
+from .wgsl_analyzer import WGSLAnalysisRequest, analyze_wgsl, looks_like_wgsl
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +284,7 @@ def inspect_program(
             len(frames) * math.ceil(request.width / 64) * math.ceil(request.height / 64)
         )
         plans.append((segments[-1], payload, None))
-    elif request.filename.lower().endswith(".wgsl") and not re.search(r'\bWGSL_SHADER\s*=', request.source):
+    elif (request.filename.lower().endswith(".wgsl") or looks_like_wgsl(request.source)) and not re.search(r'\bWGSL_SHADER\s*=', request.source):
         shader_segment(
             request.source, 1, len(request.source.splitlines()), request.filename
         )
@@ -491,6 +489,11 @@ async def analyze(network_id: str, payload: ProgramRequest, request: Request):
 @router.post("/runs", status_code=202)
 async def submit(network_id: str, payload: ProgramRequest, request: Request):
     user, _ = access(request, network_id)
+    return create_run(network_id, payload, user.id)
+
+
+def create_run(network_id: str, payload: ProgramRequest, user_id: str):
+    """Use the same analysis and execution path for UI, API, and timers."""
     created = []
     try:
         report, plans = inspect_program(payload, network_id)
@@ -504,7 +507,7 @@ async def submit(network_id: str, payload: ProgramRequest, request: Request):
             )
         for segment, job_request, plan in plans:
             job = pool_routes.pool.create(
-                job_request, plan=plan, network_id=network_id, owner_id=user.id
+                job_request, plan=plan, network_id=network_id, owner_id=user_id
             )
             created.append(
                 {
@@ -514,18 +517,8 @@ async def submit(network_id: str, payload: ProgramRequest, request: Request):
                     "line": segment["line"],
                 }
             )
-        run_id = uuid4().hex
-        db.execute(
-            "INSERT INTO runs VALUES(?,?,?,?,?,?)",
-            (
-                run_id,
-                network_id,
-                user.id,
-                payload.filename,
-                json.dumps(created),
-                time.time(),
-            ),
-        )
+        run_id = db.save_run(network_id, user_id, payload.filename, created,
+                             {'kind': 'program', 'request': payload.model_dump(mode='json')})
         logger.info(
             "Created run %s in network %s with %d independent jobs",
             run_id,
@@ -544,6 +537,10 @@ async def submit(network_id: str, payload: ProgramRequest, request: Request):
         for job in created:
             pool_routes.pool.jobs.pop(job["job_id"], None)
         raise HTTPException(429 if isinstance(exc, CapacityError) else 422, str(exc)) from exc
+    except Exception:
+        for job in created:
+            pool_routes.pool.jobs.pop(job['job_id'], None)
+        raise
 
 
 @router.get("/runs")

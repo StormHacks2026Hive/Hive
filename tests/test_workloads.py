@@ -79,6 +79,14 @@ def test_wgsl_rewrite_and_partition_ranges():
     assert '(hive_params.offset + hive_local_index)' in analyze_wgsl(WGSLAnalysisRequest(source=generated)).wgsl
 
 
+def test_array_analyzer_directs_texture_renderers_to_animation():
+    from backend.pool.image_workloads import SHADER
+    for source in (SHADER, 'WGSL_SHADER = r"""' + SHADER + '"""'):
+        report = analyze_wgsl(WGSLAnalysisRequest(source=source))
+        assert report.status == 'unsupported'
+        assert 'Use Animation' in report.findings[0]
+
+
 @pytest.mark.parametrize('source', [WGSL.replace('values[i]', 'values[i-1]'), WGSL.replace('values[i]', 'result[i-1]'), WGSL.replace('result[i] =', 'result[i+1] ='), WGSL.replace('values[i]', 'atomicAdd(&values[i], 1)'), WGSL.replace('result[i] =', 'storageBarrier(); result[i] =')])
 def test_wgsl_rejects_dependent_or_shared_work(source):
     assert analyze_wgsl(WGSLAnalysisRequest(source=source)).status != 'ready'

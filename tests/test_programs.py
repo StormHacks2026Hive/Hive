@@ -24,6 +24,21 @@ from backend.programs import ProgramRequest, inspect_program
 from tests.test_pool import CAPABILITIES, Socket
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize('wrapped,filename', [(True, 'program.py'), (True, 'program.wgsl'), (False, 'program.py'), (False, 'program.wgsl')])
+def test_pasted_mandelbulb_is_an_image_even_with_default_python_filename(pool, wrapped, filename):
+    from backend.pool.image_workloads import SHADER
+    source = '# renderer\nWGSL_SHADER = r"""' + SHADER + '"""' if wrapped else SHADER
+    report, plans = inspect_program(ProgramRequest(source=source, filename=filename,
+                        mode='animation', width=65, height=65, frames=2, camera_turn=90), 'network')
+    assert report['status'] == 'ready', report
+    assert len(plans) == 1 and plans[0][0]['kind'] == 'image'
+    assert plans[0][2]['output_shape'] == [2, 65, 65, 4]
+    chunks = plans[0][2]['chunks']
+    first = next(c for c in chunks if c['frame_index'] == 0)
+    second = next(c for c in chunks if c['frame_index'] == 1)
+    assert first['assignment']['uniform_data'] != second['assignment']['uniform_data']
 PYTHON = """def transform(values):
     result = [0.0] * len(values)
     for i in range(len(values)):

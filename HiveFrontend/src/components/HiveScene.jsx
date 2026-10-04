@@ -9,6 +9,8 @@ export function HexIcon({ className = '', ...props }) {
 
 export function Icon({ name, ...props }) {
   const paths = {
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    code: <><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16" /></>,
     network: (
       <>
         <circle cx="12" cy="5" r="2" />

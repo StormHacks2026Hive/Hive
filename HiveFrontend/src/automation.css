@@ -1,0 +1,28 @@
+.automation-panel { padding-bottom: 24px; }
+.automation-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 24px; align-items: start; }
+.automation-form { display: flex; flex-direction: column; gap: 16px; }
+.automation-form > .button { align-self: start; }
+.automation-notice { color: var(--teal); font-size: 13px; }
+.task-description { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.api-secret { padding: 16px; background: var(--honey-light); border: 1px solid var(--bark); border-radius: 12px; display: grid; gap: 8px; }
+.api-secret input { font-family: ui-monospace, monospace; }
+.api-secret p { font-size: 11px; color: var(--muted); }
+.automation-list, .timer-cards, .timer-segments { list-style: none; padding: 0; display: grid; gap: 12px; }
+.automation-list > li { display: flex; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; }
+.automation-list p { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.api-job-summary { border: 1px solid var(--line); border-radius: 12px; padding: 16px; background: #fff8e2; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; font-size: 13px; }
+.api-job-summary p, .api-job-summary code { width: 100%; font-size: 11px; overflow-wrap: anywhere; }
+.api-calls { display: grid; gap: 18px; }
+.api-calls .panel-header { margin-bottom: 0; }
+.api-snippet { min-width: 0; }
+.api-snippet > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 12px; }
+.api-snippet pre { margin: 0; }
+.api-calls details summary { cursor: pointer; font-size: 12px; margin-bottom: 12px; }
+.timer-cards > li { padding: 18px; background: #fff8e2; border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 10px; }
+.timer-cards .panel-header { margin-bottom: 0; gap: 10px; }
+.timer-cards p { font-size: 12px; line-height: 1.6; color: var(--muted); }
+.timer-segments { font-size: 11px; gap: 7px; }
+.timer-segments li { display: flex; justify-content: space-between; gap: 12px; overflow-wrap: anywhere; }
+.timer-segments span { color: var(--teal); flex-shrink: 0; }
+.danger-text { color: #9f451a; }
+@media (max-width: 900px) { .automation-columns { grid-template-columns: minmax(0, 1fr); gap: 18px; } }

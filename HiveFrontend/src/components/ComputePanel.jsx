@@ -3,6 +3,7 @@ import { api, networkApi } from '../api.js'
 import JobResults, { saveFile } from './JobResults.jsx'
 import { nodeSpecs } from '../nodeSpecs.js'
 import { HexIcon } from './HiveScene.jsx'
+import { sourceType } from '../sourceType.js'
 import '../compute.css'
 
 const SAMPLE = `def transform(values):\n    result = [0.0] * len(values)\n    for i in range(len(values)):\n        result[i] = values[i] * 2 + 1\n    return result\n`
@@ -25,12 +26,24 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
   const [target, setTarget] = useState('auto'), [example, setExample] = useState('python')
   const [input, setInput] = useState('[1, 2, 3, 4]'), [useInput, setUseInput] = useState(true), [dtype, setDtype] = useState('f32'), [count, setCount] = useState(8192)
   const [report, setReport] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [loadingFile, setLoadingFile] = useState(false)
   const [frames, setFrames] = useState(1), [fps, setFps] = useState(12), [width, setWidth] = useState(256), [height, setHeight] = useState(256)
   const [settings, setSettings] = useState('{}'), [frameValues, setFrameValues] = useState(''), [cameraTurn, setCameraTurn] = useState(30)
   const [model, setModel] = useState(''), [shape, setShape] = useState('4, 1'), [batchSize, setBatchSize] = useState(32)
   const [jobs, setJobs] = useState([]), [jobId, setJobId] = useState(''), [history, setHistory] = useState([])
   const revision = useRef(0)
+  const uploadRevision = useRef(0)
+  const working = busy || loadingFile
   function edit(update) { revision.current++; setReport(null); setError(''); update() }
+  function editSource(update) { uploadRevision.current++; setLoadingFile(false); edit(update) }
+  function updateSource(value) {
+    editSource(() => {
+      setSource(value)
+      const type = sourceType(value)
+      if (type.rawWgsl && !filename.toLowerCase().endsWith('.wgsl')) setFilename('program.wgsl')
+      if (type.image) { setMode('animation'); if (Number(frames) === 1) setFrames(8) }
+    })
+  }
   useEffect(() => {
     let active = true
     api(`/api/networks/${network.id}/runs`).then(rows => { if (active) { setHistory(rows); const recent = rows.find(r => r.jobs.some(j => j.status !== 'expired')); if (recent) { setJobs(recent.jobs); setJobId(recent.jobs[0]?.job_id || '') } } }).catch(e => { if (active) setError(e.message) })
@@ -43,6 +56,7 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
       ...(frameValues.trim() ? { frame_values: JSON.parse(frameValues) } : {}) }
   }
   async function chooseExample(value) {
+    uploadRevision.current++; setLoadingFile(false)
     const version = ++revision.current
     setReport(null); setError(''); setExample(value); setBusy(true)
     try {
@@ -68,18 +82,24 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
   }
   async function upload(file) {
     if (!file) return
-    const version = ++revision.current; setReport(null); setError(''); setBusy(true)
+    const version = ++uploadRevision.current
+    revision.current++; setReport(null); setError(''); setLoadingFile(true)
     try {
       const extension = file.name.split('.').pop().toLowerCase()
       if (!['py','wgsl','onnx'].includes(extension)) throw Error('Choose a .py, .wgsl, or .onnx file')
       if (file.size > (extension === 'onnx' ? 4194304 : 65536)) throw Error('File is too large')
       const content = extension === 'onnx' ? encode(new Uint8Array(await file.arrayBuffer())) : await file.text()
-      if (version !== revision.current) return
+      if (version !== uploadRevision.current) return
+      revision.current++; setReport(null)
       setFilename(file.name)
       if (extension === 'onnx') { setMode('onnx'); setModel(content) }
-      else { setModel(''); setSource(content); setMode(/texture_storage_2d|WGSL_SHADER/.test(content) ? 'animation' : 'compute') }
-    } catch (e) { if (version === revision.current) setError(e.message) }
-    finally { setBusy(false) }
+      else {
+        const type = sourceType(content)
+        setModel(''); setSource(content); setMode(type.image ? 'animation' : 'compute')
+        if (type.image) setFrames(value => Number(value) === 1 ? 8 : value)
+      }
+    } catch (e) { if (version === uploadRevision.current) setError(e.message) }
+    finally { if (version === uploadRevision.current) setLoadingFile(false) }
   }
   async function analyze(mark = false) {
     setBusy(true); setError(''); const version = revision.current
@@ -111,11 +131,11 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="compute-columns">
       <section className="work-editor panel">
-        <div className="panel-header"><div><span className="section-kicker">01 / YOUR TASK</span><h2>Prepare your work</h2></div><select aria-label="Work mode" value={mode} disabled={busy} onChange={e => { const next = e.target.value; if (next === 'animation' && !/texture_storage_2d|WGSL_SHADER/.test(source)) chooseExample('mandelbulb'); else if (next === 'onnx' && !model) chooseExample('onnx'); else if (next === 'compute' && mode === 'onnx') chooseExample('python'); else edit(() => { setMode(next); if (next === 'animation' && Number(frames) === 1) setFrames(8) }) }}><option value="compute">Compute</option><option value="animation">Animation</option><option value="onnx">ONNX</option></select></div>
-        <label>Example<select value={example} disabled={busy} onChange={e => chooseExample(e.target.value)}><option value="python">Python array loop</option><option value="wgsl">WGSL array loop</option><option value="mandelbulb">Mandelbulb animation</option><option value="mandelbrot">Mandelbrot animation</option><option value="onnx">ONNX · dense layer</option></select></label>
+        <div className="panel-header"><div><span className="section-kicker">01 / YOUR TASK</span><h2>Prepare your work</h2></div><select aria-label="Work mode" value={mode} disabled={working} onChange={e => { const next = e.target.value; if (next === 'animation' && !/texture_storage_2d|WGSL_SHADER/.test(source)) chooseExample('mandelbulb'); else if (next === 'onnx' && !model) chooseExample('onnx'); else if (next === 'compute' && mode === 'onnx') chooseExample('python'); else edit(() => { setMode(next); if (next === 'animation' && Number(frames) === 1) setFrames(8) }) }}><option value="compute">Compute</option><option value="animation">Animation</option><option value="onnx">ONNX</option></select></div>
+        <label>Example<select value={example} disabled={working} onChange={e => chooseExample(e.target.value)}><option value="python">Python array loop</option><option value="wgsl">WGSL array loop</option><option value="mandelbulb">Mandelbulb animation</option><option value="mandelbrot">Mandelbrot animation</option><option value="onnx">ONNX · dense layer</option></select></label>
         <div className="compute-choices" aria-label="Source entry">{['type','file'].map(value => <button key={value} aria-pressed={entry === value} className={`button ${entry === value ? 'button-primary' : 'button-secondary'}`} onClick={() => setEntry(value)}>{value === 'type' ? 'Type code' : 'Upload file'}</button>)}</div>
-        {entry === 'file' || mode === 'onnx' ? <label className="file-drop"><span>Choose a file for your hive</span><small>{mode === 'onnx' ? 'ONNX model' : 'Python or WGSL'} · {filename}</small><input type="file" accept={mode === 'onnx' ? '.onnx' : '.py,.wgsl'} onChange={e => upload(e.target.files[0])} /></label> : <label>Language<select value={filename.endsWith('.wgsl') ? 'wgsl' : 'py'} onChange={e => edit(() => { setFilename(`program.${e.target.value}`); setSource(e.target.value === 'wgsl' ? SHADER : SAMPLE) })}><option value="py">Python</option><option value="wgsl">WGSL</option></select></label>}
-        {mode !== 'onnx' && <div className="source-field"><div className="source-caption"><label htmlFor="source-code">Source code</label><span>{filename}</span></div><textarea id="source-code" className="code-editor" spellCheck={false} value={source} onChange={e => edit(() => setSource(e.target.value))} placeholder={mode === 'animation' ? 'Paste a renderer, or leave empty for Mandelbrot' : 'Python or WGSL source'} /></div>}
+        {entry === 'file' || mode === 'onnx' ? <label className="file-drop"><span>Choose a file for your hive</span><small>{mode === 'onnx' ? 'ONNX model' : 'Python or WGSL'} · {filename}</small><input type="file" accept={mode === 'onnx' ? '.onnx' : '.py,.wgsl'} onChange={e => { const file = e.currentTarget.files[0]; e.currentTarget.value = ''; upload(file) }} /></label> : <label>Language<select value={filename.endsWith('.wgsl') ? 'wgsl' : 'py'} onChange={e => editSource(() => { setFilename(`program.${e.target.value}`); setSource(e.target.value === 'wgsl' ? SHADER : SAMPLE) })}><option value="py">Python</option><option value="wgsl">WGSL</option></select></label>}
+        {mode !== 'onnx' && <div className="source-field"><div className="source-caption"><label htmlFor="source-code">Source code</label><span>{filename}</span></div><textarea id="source-code" className="code-editor" spellCheck={false} value={source} onChange={e => updateSource(e.target.value)} placeholder={mode === 'animation' ? 'Paste a renderer, or leave empty for Mandelbrot' : 'Python or WGSL source'} /></div>}
         {mode === 'compute' && <label>Segmentation<select value={segmentation} onChange={e => edit(() => setSegmentation(e.target.value))}><option value="auto">Automatic</option><option value="manual">Use my markers</option></select></label>}
         {mode === 'compute' && !filename.endsWith('.wgsl') && <label>Python target<select value={target} onChange={e => edit(() => setTarget(e.target.value))}><option value="auto">Auto / comment targets</option><option value="gpu">GPU</option><option value="cpu">CPU</option></select></label>}
         {mode !== 'animation' ? <>
@@ -127,8 +147,8 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
           <label>Camera turn (degrees)<input type="number" min="-360" max="360" value={cameraTurn} onChange={e => edit(() => setCameraTurn(e.target.value))} /></label>
           <details><summary>Renderer values</summary><label>Settings (JSON)<textarea value={settings} onChange={e => edit(() => setSettings(e.target.value))} /></label><label>Per-frame values (JSON array)<textarea value={frameValues} onChange={e => edit(() => setFrameValues(e.target.value))} placeholder='[{"camera_position":[3,2,3]},{"camera_position":[-3,2,3]}]' /></label></details>
         </>}
-        <div className="compute-actions"><button className="button button-secondary" disabled={busy} onClick={() => analyze()}>Analyze</button>{mode === 'compute' && !filename.endsWith('.wgsl') && <button className="button button-secondary" disabled={busy} onClick={() => analyze(true)}>Mark & analyze</button>}<button className="button button-primary" disabled={busy || report?.status !== 'ready'} onClick={submit}>{busy ? 'Working…' : 'Send'}</button></div>
-        {mode === 'animation' && <button className="text-button" onClick={() => edit(() => { setSource(''); setFilename('animation.py') })}>Use built-in Mandelbrot</button>}
+        <div className="compute-actions"><button className="button button-secondary" disabled={working} onClick={() => analyze()}>Analyze</button>{mode === 'compute' && !filename.endsWith('.wgsl') && <button className="button button-secondary" disabled={working} onClick={() => analyze(true)}>Mark & analyze</button>}<button className="button button-primary" disabled={working || report?.status !== 'ready'} onClick={submit}>{loadingFile ? 'Reading file…' : busy ? 'Working…' : 'Send'}</button></div>
+        {mode === 'animation' && <button className="text-button" onClick={() => editSource(() => { setSource(''); setFilename('animation.py') })}>Use built-in Mandelbrot</button>}
         {source.includes('# hive:') && <p className="compute-hint">Edit gpu/cpu in the comments, then analyze again.</p>}
       </section>
       <div className="compute-review">

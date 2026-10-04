@@ -9,7 +9,7 @@ function workspaceState(value) {
   }
   return {
     network: text(value.network?.id) ? { id: value.network.id } : null,
-    tab: ['network', 'mapping', 'compute'].includes(value.tab) ? value.tab : 'network', positions,
+    tab: ['network', 'mapping', 'compute', 'api', 'timer'].includes(value.tab) ? value.tab : 'network', positions,
     mapView: { selectedId: text(value.mapView?.selectedId) ? value.mapView.selectedId : 'you',
       filter: ['all', 'online', 'receiving'].includes(value.mapView?.filter) ? value.mapView.filter : 'all',
       zoom: Number.isFinite(value.mapView?.zoom) ? Math.max(.75, Math.min(1.35, value.mapView.zoom)) : 1 },

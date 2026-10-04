@@ -55,6 +55,53 @@ Generated `dist/` files are local build artifacts.
 
 ## Use
 
+### API and timers
+
+The **API** tab creates named, network-scoped bearer keys with read-only or
+read-and-submit access and an expiry you choose. Copy a new key before leaving
+the tab; only its hash is stored. Existing keys can be pasted into Connection
+key and tested. Each task has a description, individual job status/result calls,
+and a whole-task repeat call. The Python example polls every segment and fetches
+its output. Expand **Send a task through API** to edit JSON and send it directly,
+or copy its curl request. A key can be revoked from this tab.
+
+The **Timer** tab schedules a saved whole task once or at a repeating interval,
+with a first-run time in your local timezone. Every segment, original input,
+renderer setting and ONNX model is preserved. Pause, resume, run now, or remove
+a timer. Timers live in SQLite and execute on the server, independent of the
+page being open. The server and contributing devices must be online; overdue
+runs fire once instead of building a backlog. A timer waits while its previous
+run is active or no contributor is connected. Pausing/removing a timer stops
+future firings; cancel an already submitted job from Compute.
+
+Tasks submitted before saved inputs were introduced can be recovered while
+their jobs are retained. If those older jobs expired, send the task again from
+Compute before scheduling it. Saved inputs persist across server restarts;
+computed outputs still use the existing expiring in-memory cache.
+
+External calls use `Authorization: Bearer YOUR_API_KEY` at
+`/api/v1/networks/NETWORK_ID`:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/runs` | Saved tasks and their jobs |
+| POST | `/runs` | Submit a Python/WGSL `ProgramRequest` |
+| POST | `/onnx` | Submit an ONNX request with its model and inputs |
+| POST | `/runs/RUN_ID/repeat` | Rerun every segment with saved inputs |
+| GET | `/jobs/JOB_ID` | Job status, progress, format and shape |
+| GET | `/jobs/JOB_ID/result` | Numeric JSON: `format`, `shape`, `values` |
+| GET | `/jobs/JOB_ID/result?format=binary` | Complete binary output, including RGBA frames |
+| POST | `/jobs/JOB_ID/cancel` | Cancel a job sent by you, or in a network you own |
+
+Submit/repeat/cancel require a key with submit access. Key management and timer
+management use the normal authenticated browser session and CSRF protection.
+Browser callers on other origins must be listed in `CORS_ORIGINS`; server-side
+callers are not restricted by CORS. Numeric JSON represents non-finite GPU
+values as `null`. The default API request is a CPU count-based sum of squares:
+count 10 yields `[285]`.
+
+### Network and compute
+
 Guests use the same network and compute features with a server-issued session.
 Refresh keeps their identity and saved workspace for the session's one-hour lifetime.
 Signing out or clearing cookies ends access to that guest identity; a new guest

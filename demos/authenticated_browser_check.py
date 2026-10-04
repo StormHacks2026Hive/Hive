@@ -1,6 +1,7 @@
 """Exercise the real merged UI, two users, GPU/CPU work and node controls.
 
-Starts an isolated server/database. Test sessions are seeded locally; no login
+Includes API key connections and server-driven task timers. Starts an isolated
+server/database. Test sessions are seeded locally; no login
 bypass is exposed by the production app. Google token verification has separate
 signed-token tests. Both browser contexts share one physical GPU, so this is a
 correctness check, not a scaling benchmark.
@@ -388,6 +389,44 @@ def main():
                     assert json.loads(Path(download.value.path()).read_text()) == expected_array
 
                     # The bundled user file has a Python string wrapper and a .wgsl extension.
+                    alice.get_by_role('combobox', name='Example', exact=True).select_option('python')
+                    alice.get_by_role('button', name='Upload file', exact=True).click()
+                    # A settings edit must not discard an in-flight file read.
+                    alice.evaluate('''() => {
+                        window.originalFileText = File.prototype.text;
+                        File.prototype.text = function() {
+                            const file = this;
+                            return new Promise(resolve => {
+                                window.finishFileUpload = () => window.originalFileText.call(file).then(resolve);
+                            });
+                        };
+                    }''')
+                    uploaded_renderer = 'WGSL_SHADER = r"""' + shader + '"""'
+                    alice.locator('input[type=file]').set_input_files({'name': 'Mandelbulb.wgsl', 'mimeType': 'text/plain', 'buffer': uploaded_renderer.encode()})
+                    alice.wait_for_function('typeof window.finishFileUpload === "function"')
+                    alice.get_by_label('Input values', exact=True).fill('[2,3,4]')
+                    alice.evaluate('window.finishFileUpload()')
+                    alice.evaluate('() => { File.prototype.text = window.originalFileText; }')
+                    expect(alice.get_by_label('Work mode')).to_have_value('animation')
+                    expect(alice.locator('#source-code')).to_have_value(uploaded_renderer)
+                    assert alice.locator('input[type=file]').input_value() == ''
+                    # Re-selecting the same file should trigger a new read.
+                    alice.get_by_label('Work mode').select_option('compute')
+                    alice.locator('input[type=file]').set_input_files({'name': 'Mandelbulb.wgsl', 'mimeType': 'text/plain', 'buffer': uploaded_renderer.encode()})
+                    expect(alice.get_by_label('Work mode')).to_have_value('animation')
+                    for pasted in (shader, 'WGSL_SHADER = r"""' + shader + '"""'):
+                        alice.get_by_role('combobox', name='Example', exact=True).select_option('python')
+                        alice.locator('#source-code').fill(pasted)
+                        expect(alice.get_by_label('Work mode')).to_have_value('animation')
+                        alice.get_by_label('Width', exact=True).fill('65')
+                        alice.get_by_label('Height', exact=True).fill('65')
+                        alice.get_by_label('Frames', exact=True).fill('2')
+                        with alice.expect_response(lambda r: r.url.endswith('/analyze') and r.request.method == 'POST') as analyzed:
+                            alice.get_by_role('button', name='Analyze', exact=True).click()
+                        report = analyzed.value.json()
+                        assert report['status'] == 'ready', report
+                        assert report['segments'][0]['kind'] == 'image'
+                        assert report['segments'][0]['output_shape'] == [2, 65, 65, 4]
                     alice.get_by_role('combobox', name='Example', exact=True).select_option('mandelbulb')
                     expect(alice.get_by_role('button', name='Analyze', exact=True)).to_be_enabled(timeout=30000)
                     assert alice.get_by_label('Frames', exact=True).input_value() == '8'
@@ -425,6 +464,72 @@ def main():
                     output = alice.get_by_label('Output array', exact=True)
                     expect(output).to_contain_text('[14,19,24', timeout=60000)
                     assert json.loads(output.inner_text()) == [14,19,24,24,33,42,34,47,60,44,61,78]
+
+                    # API connections use scoped bearer keys; timer runs happen
+                    # on the server, even when the Timer page is not open.
+                    alice.get_by_role('button', name='API', exact=True).click()
+                    alice.get_by_role('combobox', name='Access', exact=True).select_option('run')
+                    with alice.expect_response(lambda r: r.url.endswith('/api-keys') and r.request.method == 'POST') as created:
+                        alice.get_by_role('button', name='Create API key', exact=True).click()
+                    assert created.value.status == 201
+                    connection = created.value.json()
+                    bearer = {'Authorization': 'Bearer ' + connection['key']}
+                    expect(alice.get_by_label('New API key', exact=True)).to_have_value(connection['key'])
+                    alice.get_by_role('button', name='Test connection', exact=True).click()
+                    expect(alice.get_by_role('status')).to_have_text('Connected to this hive')
+                    assert '/api/v1/networks/' + network_id in alice.locator('.api-calls').inner_text()
+                    alice.get_by_text('Send a task through API', exact=True).click()
+                    with alice.expect_response(lambda r: '/api/v1/' in r.url and r.url.endswith('/runs') and r.request.method == 'POST') as created:
+                        alice.get_by_role('button', name='Send through API', exact=True).click()
+                    assert created.value.status == 202, created.value.text()
+                    api_run = created.value.json()
+                    api_job_url = base + '/api/v1/networks/' + network_id + '/jobs/' + api_run['jobs'][0]['job_id']
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
+                        result = contexts[0].request.get(api_job_url + '/result', headers=bearer)
+                        if result.status == 200:
+                            break
+                        assert result.status == 409, result.text()
+                        alice.wait_for_timeout(100)
+                    assert result.json()['values'] == [285]
+                    expect(alice.get_by_role('combobox', name='Task', exact=True)).to_have_value(api_run['id'])
+
+                    alice.get_by_role('button', name='Timer', exact=True).click()
+                    alice.get_by_label('Timer name', exact=True).fill('Browser timer')
+                    alice.get_by_role('combobox', name='Run', exact=True).select_option('once')
+                    import datetime
+                    past = (datetime.datetime.now() - datetime.timedelta(minutes=1)).strftime('%Y-%m-%dT%H:%M')
+                    alice.get_by_label('First run · your local time', exact=True).fill(past)
+                    with alice.expect_response(lambda r: r.url.endswith('/timers') and r.request.method == 'POST') as created:
+                        alice.get_by_role('button', name='Save timer', exact=True).click()
+                    assert created.value.status == 201, created.value.text()
+                    timer_id = created.value.json()['id']
+                    alice.get_by_role('button', name='Mapping', exact=True).click()
+                    deadline = time.monotonic() + 30
+                    while time.monotonic() < deadline:
+                        timers = contexts[0].request.get(base + '/api/networks/' + network_id + '/timers').json()
+                        scheduled = next(t for t in timers if t['id'] == timer_id)
+                        if scheduled['last_run_id'] and scheduled['jobs'][0]['status'] == 'done':
+                            break
+                        alice.wait_for_timeout(100)
+                    assert scheduled['enabled'] == 0 and scheduled['jobs'][0]['status'] == 'done'
+                    scheduled_job = scheduled['jobs'][0]['job_id']
+                    assert contexts[0].request.get(base + '/api/v1/networks/' + network_id + '/jobs/' + scheduled_job + '/result', headers=bearer).json()['values'] == [285]
+                    alice.get_by_role('button', name='Timer', exact=True).click()
+                    expect(alice.locator('.timer-cards')).to_contain_text('Finished')
+                    alice.reload()
+                    expect(alice.locator('.timer-cards')).to_contain_text('Browser timer', timeout=30000)
+                    alice.get_by_role('button', name='Resume', exact=True).click()
+                    expect(alice.get_by_role('button', name='Pause', exact=True)).to_be_visible()
+                    alice.get_by_role('button', name='Pause', exact=True).click()
+                    expect(alice.locator('.timer-cards')).to_contain_text('Paused')
+                    alice.get_by_role('button', name='Remove', exact=True).click()
+                    expect(alice.locator('.timer-cards')).not_to_contain_text('Browser timer')
+                    alice.get_by_role('button', name='API', exact=True).click()
+                    alice.get_by_role('button', name='Revoke', exact=True).click()
+                    expect(alice.get_by_role('button', name='Revoke', exact=True)).not_to_be_visible()
+                    assert contexts[0].request.get(api_job_url, headers=bearer).status == 401
+                    alice.get_by_role('button', name='Compute', exact=True).click()
                     # Controls persist and the remote browser obeys them.
                     csrf = (
                         contexts[0]
@@ -488,7 +593,7 @@ def main():
                     assert not errors, errors
                     browser.close()
                     LOG.info(
-                        "Authenticated UI: GPU/CPU arrays with 8205 ordered values, JSON, Mandelbulb preset, every frame on canvas, cached playback, ONNX preset, node controls: passed"
+                        "Authenticated UI: GPU/CPU arrays, Mandelbulb/ONNX presets, cached playback, API key connections/submission/results/revocation, server timers/refresh/controls, node controls: passed"
                     )
             finally:
                 server.terminate()

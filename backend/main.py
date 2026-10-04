@@ -21,6 +21,7 @@ from .pool.routes import router as pool_router, pool
 from .auth import router as auth_router
 from .networks import router as network_router
 from .programs import router as program_router
+from .automation import router as automation_router, external as external_router, run_timers
 
 store = MemoryStore()
 scheduler = Scheduler(store)
@@ -30,13 +31,17 @@ Incoming = TypeAdapter(Annotated[Union[Register, Heartbeat, ChunkResult, ChunkEr
 async def lifespan(app):
     task = asyncio.create_task(scheduler.run())
     pool_task = asyncio.create_task(pool.run())
+    timer_task = asyncio.create_task(run_timers())
     yield
     task.cancel()
     pool_task.cancel()
+    timer_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
     with contextlib.suppress(asyncio.CancelledError):
         await pool_task
+    with contextlib.suppress(asyncio.CancelledError):
+        await timer_task
 
 app = FastAPI(lifespan=lifespan)
 
@@ -53,7 +58,9 @@ app.include_router(pool_router)
 app.include_router(auth_router)
 app.include_router(network_router)
 app.include_router(program_router)
-app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_credentials=True, allow_methods=['GET','POST'], allow_headers=['Content-Type','X-CSRF-Token'])
+app.include_router(automation_router)
+app.include_router(external_router)
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv('CORS_ORIGINS', 'http://localhost:5173,http://127.0.0.1:5173').split(','), allow_credentials=True, allow_methods=['GET','POST'], allow_headers=['Content-Type','X-CSRF-Token','Authorization'])
 
 @app.post('/kernels/analyze', response_model=CompatibilityReport)
 async def analyze_kernel(request: SourceRequest):

@@ -42,12 +42,21 @@ HEADER = """struct HiveParams { offset: u32, count: u32, seed: u32, padding: u32
 """
 
 
+def looks_like_wgsl(source: str) -> bool:
+    code = re.sub(r'/\*.*?\*/|//[^\n]*', '', source, flags=re.DOTALL).strip()
+    return bool(re.search(r'@compute\b', code) and re.match(r'^(?:@|struct\b|fn\b|var(?:\s|<)|const\b|alias\b|override\b|enable\b|requires\b|diagnostic\b)', code))
+
+
 def analyze_wgsl(request: WGSLAnalysisRequest) -> WGSLAnalysis:
     if math.ceil(request.count / request.chunk_size) > 2048:
         return WGSLAnalysis(
             status="unsupported", findings=["Maximum 2048 chunks; increase chunk_size"]
         )
     code = re.sub(r"/\*.*?\*/|//[^\n]*", "", request.source, flags=re.S).strip()
+    if re.search(r'\btexture_storage_2d\s*<', code):
+        return WGSLAnalysis(status='unsupported', findings=[
+            'This shader renders a 2D image, not a numeric array. Use Animation in Compute (or /pool/wgsl/image/analyze) to analyze the renderer.'
+        ])
     findings = []
     if re.search(
         r"\b(atomic\w*|workgroupBarrier|storageBarrier|texture\w*|workgroup)\b", code

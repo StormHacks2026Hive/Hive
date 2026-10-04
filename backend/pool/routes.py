@@ -39,7 +39,16 @@ async def create_job(request: JobSubmission, http: Request):
     try:
         if request.kind == 'onnx':
             plan = await asyncio.to_thread(onnx_plan, request)
-            return JobCreated(job_id=pool.create(request, plan=plan, network_id=network_id, owner_id=user.id if user else None).job_id)
+            job = pool.create(request, plan=plan, network_id=network_id, owner_id=user.id if user else None)
+            if network_id and user:
+                try:
+                    db.save_run(network_id, user.id, 'ONNX model',
+                                [{'job_id': job.job_id, 'name': 'ONNX inference', 'target': 'gpu'}],
+                                {'kind': 'onnx', 'request': request.model_dump(mode='json')})
+                except Exception:
+                    pool.jobs.pop(job.job_id, None)
+                    raise
+            return JobCreated(job_id=job.job_id)
         return JobCreated(job_id=pool.create(request, network_id=network_id, owner_id=user.id if user else None).job_id)
     except ValueError as exc:
         raise HTTPException(429 if isinstance(exc, CapacityError) else 422, str(exc)) from exc

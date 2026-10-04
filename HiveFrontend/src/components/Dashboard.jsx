@@ -8,6 +8,8 @@ import useUITransition from '../useUITransition.js'
 import useNetwork from '../useNetwork.js'
 import ComputePanel from './ComputePanel.jsx'
 import NetworkInvite from './NetworkInvite.jsx'
+import ApiPanel from './ApiPanel.jsx'
+import TimerPanel from './TimerPanel.jsx'
 
 function ConfirmDialog({ type, nodeName, onClose, onConfirm }) {
   const dialog = useRef(null)
@@ -151,6 +153,10 @@ export default function Dashboard({ user, initialState, invitedNetwork, onInvite
             aria-current={tab === 'compute' ? 'page' : undefined} onClick={() => changeTab('compute')}>
             <Icon name="plus" /> Compute <Icon className="nav-arrow" name="arrow" />
           </button>
+          {['api', 'timer'].map(item => <button key={item} className={tab === item ? 'nav-item active' : 'nav-item'} disabled={!network}
+            aria-current={tab === item ? 'page' : undefined} onClick={() => changeTab(item)}>
+            <Icon name={item === 'api' ? 'code' : 'clock'} /> {item === 'api' ? 'API' : 'Timer'} <Icon className="nav-arrow" name="arrow" />
+          </button>)}
         </nav>
         <div className="sidebar-account">
           <span className="account-avatar">{user.name.slice(0, 1).toUpperCase()}</span>
@@ -172,7 +178,7 @@ export default function Dashboard({ user, initialState, invitedNetwork, onInvite
         <header className="workspace-header">
           <div className="breadcrumb">
             Workspace <span>/</span>
-            <strong>{{ network: 'Network', mapping: 'Mapping', compute: 'Compute' }[tab]}</strong>
+            <strong>{{ network: 'Network', mapping: 'Mapping', compute: 'Compute', api: 'API', timer: 'Timer' }[tab]}</strong>
           </div>
           {network && (
             <span className="workspace-status">
@@ -185,16 +191,16 @@ export default function Dashboard({ user, initialState, invitedNetwork, onInvite
           <div className="page-heading">
             <div>
               <h1 ref={headingRef} tabIndex={-1}>
-                {tab === 'network' ? network?.name || `Welcome, ${user.name.split(' ')[0]}.` : tab === 'mapping' ? 'Network map' : 'Send work'}
+                {tab === 'network' ? network?.name || `Welcome, ${user.name.split(' ')[0]}.` : tab === 'mapping' ? 'Network map' : tab === 'api' ? 'API' : tab === 'timer' ? 'Timer' : 'Send work'}
               </h1>
             </div>
             <div className="page-heading-comb" aria-hidden="true">
               <HexIcon />
             </div>
           </div>
-          <div className={`workspace-content ${tab === 'compute' ? 'compute-content' : ''} ${network ? 'connected-content' : ''}`}>
+          <div className={`workspace-content ${['compute', 'api', 'timer'].includes(tab) ? 'compute-content' : ''} ${network ? 'connected-content' : ''}`}>
           {live.error && <p className="form-error" role="alert">{live.error}</p>}
-          {tab === 'compute' && network ? <ComputePanel network={network} nodes={nodes} onControl={control} onKillNode={id => setConfirm({ type: 'kill', nodeId: id })} /> : tab === 'network' ? (
+          {tab === 'api' && network ? <ApiPanel network={network} /> : tab === 'timer' && network ? <TimerPanel network={network} /> : tab === 'compute' && network ? <ComputePanel network={network} nodes={nodes} onControl={control} onKillNode={id => setConfirm({ type: 'kill', nodeId: id })} /> : tab === 'network' ? (
             !network ? (
               <NetworkSetup initialNetworkId={pendingInvite} onConnect={connect} knownNetworks={knownNetworks} onRestore={n => transition(() => live.restore(n), { page: true })} />
             ) : (
