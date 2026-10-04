@@ -1,5 +1,6 @@
 import { TileGPU } from './gpu.js';
 import { executeCPU, benchmarkCPU } from './cpu.js';
+import { hardwareInfo } from './device-info.js';
 import { resultFrame } from '/shared/protocol.js';
 let gpu, socket, heartbeat, poll, stopped = false, visible = true, current = null, awaitingAck = false, enabled = true, phase = 'idle', gpuReady = false;
 const send = message => { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ v: 1, ...message })); };
@@ -18,7 +19,7 @@ async function connect(config) {
   visible = config.visible;
   try {
     const cpu_score = benchmarkCPU().score;
-    let capabilities = { webgpu: false, adapter: {}, limits: null, features: [], benchmark: null, cpu: true, cpu_score, device_type: config.device_type || 'browser' };
+    let capabilities = { webgpu: false, adapter: {}, limits: null, features: [], benchmark: null, cpu: true, cpu_score, hardware: hardwareInfo(navigator), device_type: config.device_type || 'browser' };
     try {
       gpu = new TileGPU();
       await gpu.init(message => {
@@ -53,7 +54,7 @@ async function connect(config) {
           send({ type: 'heartbeat', visible, phase, attempt_id: null });
           report(visible && enabled ? 'idle' : 'paused', { worker_id: chunk.worker_id }); request(); return;
         }
-        if (chunk.type === 'node_control') { enabled = chunk.mode === 'running'; report(enabled ? 'idle' : 'paused'); if (enabled) request(); else clearTimeout(poll); return; }
+        if (chunk.type === 'node_control') { enabled = chunk.mode === 'running'; if (!current && !awaitingAck) report(enabled ? 'idle' : 'paused'); if (enabled) request(); else clearTimeout(poll); return; }
         if (chunk.type === 'no_work') { report(visible && enabled ? 'idle' : 'paused', { detail: chunk.reason }); request(chunk.retry_after_ms); return; }
         if (chunk.type === 'result_ack') {
           awaitingAck = false;

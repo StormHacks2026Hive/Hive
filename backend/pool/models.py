@@ -31,6 +31,7 @@ class Manifest(Model):
     workgroup_size: list[int] = [8, 8]
 
 class Limits(Model):
+    maxTextureDimension2D: int | None = Field(default=None, ge=1, le=65535)
     maxBufferSize: int = Field(ge=4, le=2**53)
     maxStorageBufferBindingSize: int = Field(ge=4, le=2**53)
     maxUniformBufferBindingSize: int = Field(ge=16, le=2**53)
@@ -40,6 +41,7 @@ class Limits(Model):
     maxComputeWorkgroupsPerDimension: int = Field(ge=1, le=65535)
 
 class Adapter(Model):
+    is_fallback: bool | None = None
     vendor: str = Field(default='', max_length=256)
     architecture: str = Field(default='', max_length=256)
     description: str = Field(default='', max_length=256)
@@ -50,7 +52,16 @@ class Benchmark(Model):
     pixels: Literal[4096] = 4096
     elapsed_ms: float = Field(gt=0, le=120000)
 
+class Hardware(Model):
+    """Optional browser reports; cores/RAM may be rounded or privacy-limited."""
+
+    logical_cores: int | None = Field(default=None, ge=1, le=4096)
+    memory_gib: float | None = Field(default=None, gt=0, le=65536)
+    platform: str = Field(default='', max_length=80)
+
+
 class Capabilities(Model):
+    hardware: Hardware = Field(default_factory=Hardware)
     onnx: bool = False
     webgpu: bool
     cpu_score: float = Field(default=1, gt=0, le=1e12)
@@ -141,7 +152,7 @@ class Assignment(Wire):
     output_name: str | None = None
     input_shape: list[int] | None = None
     output_shape: list[int] | None = None
-    output_format: Literal['rgba8', 'f32', 'u32', 'i32'] = 'rgba8'
+    output_format: Literal['rgba8', 'f32', 'f64', 'u32', 'i32'] = 'rgba8'
     timeout_ms: int
 
 class ResultHeader(Wire):
@@ -149,7 +160,7 @@ class ResultHeader(Wire):
     job_id: str
     chunk_id: str
     attempt_id: str
-    output_format: Literal['rgba8', 'f32', 'u32', 'i32']
+    output_format: Literal['rgba8', 'f32', 'f64', 'u32', 'i32']
     byte_length: int = Field(ge=1, le=1048576)
     elapsed_ms: float = Field(gt=0, le=120000)
 

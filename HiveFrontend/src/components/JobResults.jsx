@@ -47,8 +47,9 @@ export default function JobResults({ jobId, onError }) {
     fetch(job.result_url).then(async r => {
       if (!r.ok) throw Error('Could not download output')
       const bytes = await r.arrayBuffer(), view = new DataView(bytes)
-      const method = { f32: 'getFloat32', i32: 'getInt32', u32: 'getUint32' }[job.output_format]
-      if (alive) setPreview(Array.from({ length: Math.min(32, bytes.byteLength / 4) }, (_, i) => view[method](i * 4, true)))
+      const stride = job.output_format === 'f64' ? 8 : 4
+      const method = { f64: 'getFloat64', f32: 'getFloat32', i32: 'getInt32', u32: 'getUint32' }[job.output_format]
+      if (alive) setPreview(Array.from({ length: Math.min(32, bytes.byteLength / stride) }, (_, i) => view[method](i * stride, true)))
     }).catch(e => { if (alive) onError(e.message) })
     return () => { alive = false }
   }, [job?.status, job?.result_url, job?.output_format, onError])

@@ -73,6 +73,7 @@ def test_uneven_edges_cover_image_once():
 
 
 def test_pool_assembles_texture_tiles_and_http_frame(monkeypatch):
+    monkeypatch.setenv("HIVE_ALLOW_LEGACY_POOL", "true")
     from backend.main import app
     from backend.pool import routes
 

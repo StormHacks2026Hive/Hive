@@ -10,15 +10,17 @@ export class TileGPU {
       'maxComputeWorkgroupSizeX', 'maxComputeWorkgroupSizeY', 'maxComputeInvocationsPerWorkgroup', 'maxComputeWorkgroupsPerDimension']) {
       requested[name] = this.adapter.limits[name];
     }
+    if (this.adapter.limits.maxTextureDimension2D) requested.maxTextureDimension2D = this.adapter.limits.maxTextureDimension2D;
     const features = this.adapter.features.has('shader-f16') ? ['shader-f16'] : [];
     this.device = await this.adapter.requestDevice({ requiredLimits: requested, requiredFeatures: features });
     this.device.lost.then(info => onLost(info.message || 'GPU device lost'));
     this.pipelines = new Map();
     this.sessions = new Map();
-    const info = this.adapter.info || {};
+    const info = this.adapter.info || (this.adapter.requestAdapterInfo ? await this.adapter.requestAdapterInfo().catch(() => ({})) : {});
     this.capabilities = {
       webgpu: true,
-      adapter: Object.fromEntries(['vendor', 'architecture', 'description', 'device'].map(key => [key, String(info[key] || '').slice(0, 256)])),
+      adapter: { ...Object.fromEntries(['vendor', 'architecture', 'description', 'device'].map(key => [key, String(info[key] || '').slice(0, 256)])),
+        is_fallback: typeof info.isFallbackAdapter === 'boolean' ? info.isFallbackAdapter : (typeof this.adapter.isFallbackAdapter === 'boolean' ? this.adapter.isFallbackAdapter : null) },
       limits: Object.fromEntries(Object.keys(requested).map(key => [key, this.device.limits[key]])),
       features,
     };

@@ -1,4 +1,4 @@
-"""Google sign-in and short-lived, in-memory sessions for the frontend."""
+"""Google sign-in and short-lived, SQLite-backed sessions for the frontend."""
 import os
 import secrets
 import time

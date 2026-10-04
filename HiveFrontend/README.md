@@ -1,12 +1,27 @@
 # Hive frontend
 
-A React workspace with Google sign-in inside a honeycomb that expands into the
-app, local network controls, and an interactive honeycomb node map. The backend
-does not need to be running.
+React UI from the UserAuth branch, connected to the Python compute backend.
+The Network, Mapping and Compute tabs use authenticated server data. Connected
+browsers contribute CPU work, and GPU work when WebGPU is available.
 
-## Run locally
+## Run
 
-From the repository root:
+From the repository root, install backend dependencies and create local settings:
+
+```sh
+backend/.venv/bin/pip install -r requirements.txt
+cp .env.example .env
+backend/.venv/bin/python -m uvicorn backend.main:app --port 8000 --ws-max-size 12000000
+```
+
+Set `GOOGLE_CLIENT_ID` in `.env` to your Google Web application client ID.
+The server verifies Google ID token signatures and issues an HttpOnly session
+cookie. This flow does not use a Google client secret. A server-only placeholder
+can be stored in `GOOGLE_CLIENT_SECRET`; never prefix secrets with `VITE_`.
+Authorize your actual frontend origin in Google Cloud, including the HTTPS tunnel
+origin when using Cloudflare. Set `COOKIE_SECURE=true` for HTTPS deployments.
+
+For development, in a second terminal:
 
 ```sh
 cd HiveFrontend
@@ -14,89 +29,80 @@ npm ci
 npm run dev
 ```
 
-Open **http://localhost:5173**.
+Open `http://localhost:5173`. Vite proxies `/auth`, `/api`, `/pool`, contributor
+modules and WebSockets to the Python server. `HIVE_API_URL` can override the
+backend URL. Authentication settings come from `/auth/config`, not a bundled
+frontend environment variable.
 
-Vite reads the public `GOOGLE_CLIENT_ID` from the repository root `.env`.
-You can instead override it with `VITE_GOOGLE_CLIENT_ID` in
-`HiveFrontend/.env.local` or your shell. Only the public client ID is included
-in the frontend; no Google client secret is needed. Restart Vite after changing
-environment variables. A real client ID is required to sign in.
+For the single-origin server used in demos:
 
-## Configure Google
-
-Follow [Google's setup guide](https://developers.google.com/identity/gsi/web/guides/get-google-api-clientid)
-to create an OAuth client with application type **Web application**. Add these
-**Authorized JavaScript origins**:
-
-- `http://localhost`
-- `http://localhost:5173`
-
-If you open the app using `127.0.0.1`, also authorize the matching origin.
-Configure the consent screen and add your Google account as a test user if the
-Google app is in testing mode. This uses the popup flow; no redirect URI is
-needed. Put the client ID in the root `.env`:
-
-```dotenv
-GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+```sh
+cd HiveFrontend
+npm run build
+cd ..
+backend/.venv/bin/python -m uvicorn backend.main:app --port 8000 --ws-max-size 12000000
 ```
 
-Alternatively, use `HiveFrontend/.env.local`:
+Open `http://localhost:8000`. Use Node 22.12+ (or another supported Vite version).
+Generated `dist/` files are local build artifacts.
 
-```dotenv
-VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-```
+## Use
 
-## Frontend behavior
+1. Sign in with Google, create a password-protected network, and share its ID.
+2. Other users sign in and join with that ID and password. Each browser enrolls
+   a persistent device and automatically contributes while its tab is visible.
+3. In Compute, upload a `.py` or `.wgsl` file or type code. Supply an input array
+   for array computations, or turn Input array off for count-based work.
+4. Analyze to see independent regions and planned contributor shares. Mark &
+   analyze inserts `# hive:gpu begin/end` or `# hive:cpu begin/end` comments.
+   Edit both comments to change the target and analyze again. Manual segmentation
+   runs only explicitly marked Python regions.
+5. Send the work and inspect results. Numeric outputs download as little-endian
+   binary (`f32`, `f64`, `i32` or `u32`, shown by the backend); images download as PNG.
+6. For Animation, upload the Mandelbulb renderer, choose dimensions/frame count
+   and camera turn, or use built-in Mandelbrot. Renderer values and explicit
+   per-frame JSON overrides are optional. Frames can be scrubbed and played.
 
-`GoogleSignIn.jsx` renders Google's official button. The callback decodes the
-returned ID token to display the account name and email. Profile claims are
-checked for expected audience, issuer, and expiration, but the token signature
-is not verified. This is only a frontend account preview; it does not establish
-an authenticated backend session or authorize access to any API.
+Network and Mapping show actual node states, workload assignments and byte totals.
+Pause prevents new work; an active chunk may finish. Kill disconnects the node,
+reassigns unfinished work and persists an off state. Start/Resume restarts it.
+The node owner, network owner and current job sender can control that node.
+Job cancellation is available to the sender and network owner.
 
-Profile and workspace display state are saved in local storage, so refreshing
-restores your account, connected network, active tab, node mode, map positions,
-selection, filters, zoom, and recent activity. Google tokens and network
-passwords are not saved. Sign out clears the saved session and disables Google's
-automatic account selection; it leaves your Google account signed in.
-There are no requests to `/auth`.
+SQLite at `data/hive.sqlite3` persists users, hashed sessions, salted scrypt
+network passwords, memberships, devices, counters and submission history.
+`HIVE_DB_PATH` overrides the path. Local storage keeps only view preferences.
+Results and active leases remain in memory; old results become unavailable after
+expiry or a server restart, while network/device history remains saved.
 
-After sign-in, the Network tab lets you join with a network ID and password or
-create a network with a name and password (at least eight characters). Creating
-a network gives you an ID to copy and share. Networks created during this visit
-can be rejoined with their matching password; other IDs open a local preview.
-This does not create or connect to a real network.
+## Limits
 
-The workspace includes pause/resume, turn off/start, and leave-network controls.
-The Node work section shows current preview transfer activity, incoming data,
-received totals, and actual browser WebGPU adapter availability. No compute
-kernel is dispatched by this frontend; it reports that no kernel is running.
-The Mapping tab
-shows seven sample nodes with simulated receiving, sending, idle, paused, and
-offline states. Select a comb to inspect its transfer rate and received data,
-or use the filters and zoom controls. Only your own node has controls. Activity
-updates every three seconds. Node transfer stops immediately when paused or
-switched off. The animation respects reduced-motion preferences.
+The upload analyzer executes supported independent regions, not a whole Python
+program. It never runs uploaded imports, arbitrary functions or I/O. Embedded
+literal WGSL shaders are all inspected. The registered Mandelbulb texture shader
+is supported; arbitrary texture shaders and inter-region dependencies are refused.
 
-Leaving disconnects the saved network. Passwords for rejoining networks created
-during the current visit stay in memory only. The workspace keeps its warm
-white background when connecting. Page changes gently crossfade and respect
-reduced motion, with an animated fallback for browsers without View Transitions.
-The connected Network and Mapping views adapt to the viewport; the activity
-list scrolls within its panel. Select any preview node on the map to kill it.
-Stopped nodes stay offline after refresh. Your own node also has pause and
-restart controls. These controls affect the simulated network only.
-
-When backend authentication is added later, verify the ID token on the server
-and establish a server session before granting access to protected resources.
+Browser CPU work uses a bounded numeric interpreter lowered from the CPU analyzer.
+It does not require Ray on phones or laptops. The separate local Python CPU API
+uses Ray. Browser CPU results use float64 and bounded numbers; unsupported Python
+integer/bit operations and call signatures are rejected. Floating reductions can
+change rounding. Scheduling uses throughput benchmarks with at most an 8% bonus
+for the most common GPU family, not a hardcoded laptop/phone preference.
 
 ## Checks
 
 ```sh
-npm run lint
 npm test
+npm run lint
 npm run build
+# From repository root:
+backend/.venv/bin/python -m pytest
+backend/.venv/bin/python -m demos.authenticated_browser_check
 ```
 
-`npm run preview` also works without a backend. Authorize its origin in Google
-Cloud if you use it to test sign-in. Production origins must be authorized too.
+The browser check starts an isolated temporary server/database with locally seeded
+test sessions. It verifies the real UI, CPU-only fallback, GPU results, editable
+markers, animations, PNG pixels and persistent node controls. Google token
+verification is separately tested with signed JWTs. No test login bypass is exposed
+by the production server. Two browser contexts share one physical GPU, so the check
+does not claim a multi-GPU speedup.

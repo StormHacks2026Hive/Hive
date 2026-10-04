@@ -487,6 +487,12 @@ a { color: inherit; }
   .workspace-footer { margin-top: 10px; padding-top: 6px; font-size: 9px; }
   .toast { font-size: 12px; bottom: 15px; max-width: calc(100vw - 30px); padding: 11px; }
 }
+@media (max-width: 450px) {
+  .sidebar { grid-template-columns: 1fr auto; gap: 8px; }
+  .sidebar nav { grid-column: 1 / -1; grid-row: 2; }
+  .sidebar .nav-item { flex: 1; justify-content: center; padding: 8px; font-size: 12px; }
+  .sidebar-account { grid-column: 2; grid-row: 1; }
+}
 @media (max-width: 380px) {
   .login-content h1 { font-size: 22px; }
   .login-intro { margin-bottom: 12px; }

@@ -81,7 +81,10 @@ class Coordinator:
         from .workloads import AnimationRequest, WGSLRequest, PythonRequest, compute_plan, onnx_plan
         if request.kind in ('mandelbrot', 'animation'):
             frames = request.frames if isinstance(request, AnimationRequest) else [request.parameters]
-            step = 512 if isinstance(request, AnimationRequest) and request.distribution == 'frames' else 64
+            full_frame = isinstance(request, AnimationRequest) and request.distribution == 'frames'
+            if full_frame and request.width * request.height * 4 > 1_048_576:
+                raise ValueError('Full-frame dispatch exceeds transport limit; use tiles')
+            step = max(request.width, request.height) if full_frame else 64
             chunks = []
             for frame_index, parameters in enumerate(frames):
                 for y in range(0, request.height, step):
@@ -89,9 +92,9 @@ class Coordinator:
                         chunk_id = f'tile-{y//64:02d}-{x//64:02d}'
                         if request.kind == 'animation':
                             chunk_id = f'frame-{frame_index:03d}-' + chunk_id
-                        tile = Tile(x=x, y=y, width=step, height=step)
+                        tile = Tile(x=x, y=y, width=min(step, request.width-x), height=min(step, request.height-y))
                         chunks.append(Chunk(chunk_id, tile, frame_index=frame_index,
-                            byte_length=step*step*4, count=step*step,
+                            byte_length=tile.width*tile.height*4, count=tile.width*tile.height,
                             assignment={'shader_id':SHADER_ID, 'tile':tile.model_dump(),
                                 'image':{'width':request.width,'height':request.height},
                                 'parameters':parameters.model_dump(), 'frame_index':frame_index}))
@@ -218,7 +221,11 @@ class Coordinator:
         l = worker.capabilities.limits
         if chunk is None or chunk.tile is not None:
             size = chunk.byte_length if chunk else 16384
-            groups = math.ceil((chunk.tile.width if chunk else 64)/8)
+            groups = math.ceil(max(chunk.tile.width, chunk.tile.height)/8) if chunk else 8
+            if chunk and chunk.assignment.get('kind') == 'texture_tile':
+                if l.maxTextureDimension2D is not None and max(chunk.tile.width, chunk.tile.height) > l.maxTextureDimension2D:
+                    return False
+                size = math.ceil(chunk.tile.width * 4 / 256) * 256 * chunk.tile.height
             return (l.maxBufferSize >= size and l.maxStorageBufferBindingSize >= size
                 and l.maxUniformBufferBindingSize >= (176 if chunk and chunk.assignment.get('kind')=='texture_tile' else 48) and l.maxComputeWorkgroupSizeX >= 8
                 and l.maxComputeWorkgroupSizeY >= 8 and l.maxComputeInvocationsPerWorkgroup >= 64
@@ -279,6 +286,7 @@ class Coordinator:
         pending=[c for c in job.chunks if c.output is None and c.worker_id is None]
         active=[w for w in self.workers.values() if w.network_id == job.network_id and w.active and w.visible and any(self.compatible(w,c) for c in pending)]
         scores = self.weights(job.network_id, cpu=bool(pending and pending[0].assignment.get('kind') == 'cpu'), normalized=False)
+        active=[w for w in active if scores.get(w.worker_id, 0) > 0]
         nodes=[ComputeNode(w.worker_id, scores[w.worker_id]) for w in active]
         if not nodes:return
         # Cost units are output elements. Buffers/dispatch limits constrain each
@@ -338,7 +346,9 @@ class Coordinator:
         if len(payload) != chunk.byte_length or header.byte_length != len(payload) or header.output_format != job.output_format:
             self.release(worker, 'Invalid output length or format')
             raise ValueError('Invalid output length or format')
-        if job.output_format == 'f32' and any(not math.isfinite(v[0]) for v in struct.iter_unpack('<f', payload)):
+        scalar_format = '<d' if job.output_format == 'f64' else '<f'
+        scalar_bytes = 8 if job.output_format == 'f64' else 4
+        if job.output_format in ('f32', 'f64') and any(not math.isfinite(v[0]) for v in struct.iter_unpack(scalar_format, payload)):
             self.release(worker, 'Non-finite float output')
             raise ValueError('Non-finite float output')
         chunk.output = payload
@@ -353,7 +363,7 @@ class Coordinator:
                 start = frame_start + ((chunk.tile.y+row)*job.request.width+chunk.tile.x)*4
                 job.image[start:start+stride] = payload[row*stride:(row+1)*stride]
         else:
-            start = chunk.offset*4
+            start = chunk.offset*scalar_bytes
             job.image[start:start+len(payload)] = payload
         worker.busy = None
         worker.completed += 1
@@ -367,13 +377,13 @@ class Coordinator:
         contribution.elapsed_ms += header.elapsed_ms
         if all(c.output is not None for c in job.chunks):
             if job.reduction in ('sum', 'min', 'max'):
-                values = [v[0] for v in struct.iter_unpack('<f', job.image)]
-                value = job.initial + math.fsum(values) if job.reduction == 'sum' else (min if job.reduction == 'min' else max)([job.initial, *values])
-                if not math.isfinite(value) or abs(value) > 3.402823e38:
-                    self.finish(job, 'failed', 'CPU reduction overflowed float32')
+                values = [v[0] for v in struct.iter_unpack(scalar_format, job.image)]
+                value = sum(values, job.initial) if job.reduction == 'sum' else (min if job.reduction == 'min' else max)([job.initial, *values])
+                if not math.isfinite(value) or abs(value) > (2**53-1 if job.output_format == 'f64' else 3.402823e38):
+                    self.finish(job, 'failed', 'CPU reduction exceeded the supported numeric range')
                     self.publish(job)
                     return ResultAck(chunk_id=chunk.chunk_id, attempt_id=header.attempt_id, disposition='accepted')
-                job.image = bytearray(struct.pack('<f', value))
+                job.image = bytearray(struct.pack(scalar_format, value))
                 job.output_shape = [1]
             self.finish(job, 'done')
         self.emit(job.job_id, TileReady(job_id=job.job_id,tile=chunk.accepted))

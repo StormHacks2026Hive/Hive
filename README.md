@@ -1,3 +1,17 @@
+## Authenticated hive UI
+
+The UserAuth design is integrated with the compute backend on main. Sign in with
+Google, create/join a password-protected hive, and use the Network, Mapping and
+Compute tabs. Browsers contribute GPU work through WebGPU and numeric CPU work
+through Web Workers. Upload or type `.py`/`.wgsl`, analyze, edit CPU/GPU markers,
+and submit. Uploaded Mandelbulb animations support per-frame settings and PNG
+results. SQLite preserves networks, hashed credentials, devices and history.
+
+See [HiveFrontend/README.md](HiveFrontend/README.md) for setup, Google origins,
+node controls, limits and browser checks. Build the UI before starting the
+single-origin FastAPI server. Local `.env` and generated frontend `dist/` files
+are intentionally excluded from Git.
+
 # Hive
 
 Browser-only volunteer GPU compute for independent workloads. The coordinator

@@ -137,7 +137,8 @@ def test_job_limits_and_expiry():
     asyncio.run(pool.sweep()); assert len(pool.jobs)==15
 
 
-def test_http_and_binary_websocket():
+def test_http_and_binary_websocket(monkeypatch):
+    monkeypatch.setenv("HIVE_ALLOW_LEGACY_POOL", "true")
     from backend.main import app
     from backend.pool.routes import pool
     pool.jobs.clear(); pool.workers.clear(); pool.watchers.clear()

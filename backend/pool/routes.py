@@ -70,7 +70,9 @@ async def asset(shader_id: str, request: Request):
     data = SHADER if shader_id == SHADER_ID else next((job.assets[shader_id] for job in pool.jobs.values() if shader_id in job.assets), None)
     if data is None:
         raise HTTPException(404, 'Unknown or expired asset')
-    if shader_id != SHADER_ID and not legacy_enabled():
+    if shader_id != SHADER_ID:
+        if legacy_enabled() and any(shader_id in j.assets and j.network_id is None for j in pool.jobs.values()):
+            return Response(data, media_type='application/octet-stream', headers={'Cache-Control':'private, no-store'})
         from ..auth import require_user
         user = require_user(request)
         if not any(shader_id in j.assets and j.network_id and db.member(j.network_id, user.id) for j in pool.jobs.values()):
@@ -165,6 +167,8 @@ async def nodes(socket: WebSocket):
             event = await asyncio.wait_for(socket.receive(), 25)
             if event['type']=='websocket.disconnect':
                 break
+            if user and not db.read_session(socket.cookies.get('hive_session')):
+                raise ValueError('Session ended; sign in again')
             if event.get('bytes') is not None:
                 header, payload = decode_result(event['bytes'])
                 ack = pool.accept(worker, header, payload)
@@ -197,7 +201,8 @@ async def nodes(socket: WebSocket):
                 if message.code in ('device_lost','timeout'):
                     break
             elif isinstance(message, ChunkStarted):
-                worker.phase = 'working'
+                if pool.find(worker, message.chunk_id, message.attempt_id)[1]:
+                    worker.phase = 'working'
             else:
                 raise ValueError('Already registered')
     except WebSocketDisconnect:

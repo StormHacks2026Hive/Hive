@@ -9,7 +9,7 @@ function deviceKey() {
   } catch { return crypto.randomUUID() }
 }
 function deviceType() {
-  if (/iPad|Tablet/i.test(navigator.userAgent)) return 'tablet'
+  if (/iPad|Tablet/i.test(navigator.userAgent) || /Macintosh/i.test(navigator.userAgent) && navigator.maxTouchPoints > 1) return 'tablet'
   if (/Mobi|Android|iPhone/i.test(navigator.userAgent)) return 'phone'
   return 'laptop'
 }
@@ -18,8 +18,8 @@ export default function useNetwork(user, initialNetwork) {
   const [snapshot, setSnapshot] = useState({ nodes: [], jobs: [] }), [ownId, setOwnId] = useState(null)
   const [workerState, setWorkerState] = useState({ state: 'connecting' }), [error, setError] = useState('')
   const [ready, setReady] = useState(false)
-  const device = useRef(null), worker = useRef(null), generation = useRef(0)
-  if (!device.current) device.current = deviceKey()
+  const [device] = useState(deviceKey)
+  const worker = useRef(null), generation = useRef(0)
   const refresh = useCallback(async () => {
     if (!network) return
     const current = await api(`/api/networks/${network.id}`)
@@ -39,9 +39,9 @@ export default function useNetwork(user, initialNetwork) {
   useEffect(() => {
     if (!network) return
     const version = ++generation.current
-    let closed = false, timer, retry, wake, enrolled, starting = false
+    let closed = false, timer, wake, enrolled, starting = false
     setSnapshot({ nodes: [], jobs: [] }); setOwnId(null); setWorkerState({ state: 'connecting' })
-    function stopWorker() { clearTimeout(retry); worker.current?.postMessage({ type: 'stop' }); worker.current?.terminate(); worker.current = null; wake?.release().catch(() => {}); wake = null }
+    function stopWorker() { worker.current?.postMessage({ type: 'stop' }); worker.current?.terminate(); worker.current = null; wake?.release().catch(() => {}); wake = null }
     async function load() {
       if (closed) return
       try {
@@ -65,14 +65,15 @@ export default function useNetwork(user, initialNetwork) {
       const url = new URL('/pool/nodes', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
       const current = new Worker('/node/worker.js', { type: 'module' }); worker.current = current
       current.onmessage = event => {
-        if (closed || worker.current !== current) return
+        if (closed || generation.current !== version || worker.current !== current) return
         const m = event.data
         setWorkerState(previous => ({ ...previous, ...m, ...(m.state === 'idle' || m.state === 'paused' ? { job_id: null, chunk_id: null } : {}) }))
-        if (m.worker_id) starting = false
+        if (m.worker_id) { starting = false; setError('') }
         if (m.state === 'stopped' || m.state === 'disconnected') {
           starting = false; current.terminate(); worker.current = null
           // Re-enrollment reads the persisted stop state before any reconnect.
           if (m.permanent) setWorkerState({ state: 'stopped' })
+          else if (m.error) setError(m.error)
         }
       }
       current.onerror = e => { starting = false; setError(e.message || 'Worker failed'); current.terminate(); worker.current = null }
@@ -81,8 +82,8 @@ export default function useNetwork(user, initialNetwork) {
       lock()
     }
     function visibility() { worker.current?.postMessage({ type: 'visibility', visible: document.visibilityState === 'visible' }); if (document.visibilityState === 'visible') lock(); else wake?.release().catch(() => {}) }
-    api(`/api/networks/${network.id}/nodes`, { device_key: device.current, label: `${user.name.split(' ')[0]}'s ${deviceType()}` }).then(node => {
-      if (closed) return
+    api(`/api/networks/${network.id}/nodes`, { device_key: device, label: `${user.name.split(' ')[0]}'s ${deviceType()}` }).then(node => {
+      if (closed || generation.current !== version) return
       enrolled = node; setOwnId(node.id)
       if (node.mode !== 'off') start(node.mode)
       else setWorkerState({ state: 'stopped' })
@@ -90,7 +91,7 @@ export default function useNetwork(user, initialNetwork) {
     }).catch(e => { if (!closed) setError(e.message) })
     document.addEventListener('visibilitychange', visibility)
     return () => { closed = true; generation.current++; clearTimeout(timer); stopWorker(); document.removeEventListener('visibilitychange', visibility) }
-  }, [network, user.name])
+  }, [network, user.name, device])
   async function connect(details) {
     const joined = await api(details.mode === 'create' ? '/api/networks' : '/api/networks/join', details.mode === 'create'
       ? { name: details.name, password: details.password } : { network_id: details.name, password: details.password })

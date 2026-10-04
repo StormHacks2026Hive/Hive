@@ -141,7 +141,8 @@ def test_onnx_rejects_batch_mixing_wrong_shape_external_and_static_remainder():
     with pytest.raises(ValueError,match='external'): onnx_plan(OnnxAnalysisRequest(model=base64.b64encode(m.SerializeToString()).decode()),True)
 
 
-def test_extended_http_apis_and_format_validation():
+def test_extended_http_apis_and_format_validation(monkeypatch):
+    monkeypatch.setenv("HIVE_ALLOW_LEGACY_POOL", "true")
     from backend.main import app
     from backend.pool.routes import pool
     pool.jobs.clear(); pool.workers.clear()

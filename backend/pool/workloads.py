@@ -13,12 +13,18 @@ from .image_workloads import WGSLImageRequest
 
 class AnimationRequest(Model):
     kind: Literal['animation']
-    width: Literal[512] = 512
-    height: Literal[512] = 512
+    width: int = Field(default=512, ge=1, le=4096)
+    height: int = Field(default=512, ge=1, le=4096)
     tile_size: Literal[64] = 64
     frames: list[Parameters] = Field(min_length=1, max_length=32)
     fps: int = Field(default=12, ge=1, le=60)
     distribution: Literal['tiles', 'frames'] = 'tiles'
+
+    @model_validator(mode='after')
+    def bounded_output(self):
+        if self.width * self.height * 4 * len(self.frames) > 100_663_296:
+            raise ValueError('Animation output must fit 96 MiB')
+        return self
 
 class ComputeRequest(Model):
     count: int = Field(default=1, ge=1, le=2_000_000)

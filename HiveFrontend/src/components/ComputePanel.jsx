@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, networkApi } from '../api.js'
 import JobResults, { saveFile } from './JobResults.jsx'
+import { nodeSpecs } from '../nodeSpecs.js'
+import { HexIcon } from './HiveScene.jsx'
+import '../compute.css'
 
 const SAMPLE = `def transform(values):\n    result = [0.0] * len(values)\n    for i in range(len(values)):\n        result[i] = values[i] * 2 + 1\n    return result\n`
 const SHADER = `@group(0) @binding(0) var<storage, read> values: array<f32>;\n@group(0) @binding(1) var<storage, read_write> result: array<f32>;\n@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {\n    result[gid.x] = values[gid.x] * 2.0 + 1.0;\n}\n`
@@ -49,7 +52,7 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
       if (version !== revision.current) return
       setFilename(file.name)
       if (extension === 'onnx') { setMode('onnx'); setModel(content) }
-      else { setSource(content); if (/texture_storage_2d|WGSL_SHADER/.test(content)) setMode('animation') }
+      else { setModel(''); setSource(content); setMode(/texture_storage_2d|WGSL_SHADER/.test(content) ? 'animation' : 'compute') }
     } catch (e) { if (version === revision.current) setError(e.message) }
   }
   async function analyze(mark = false) {
@@ -78,13 +81,14 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
     finally { setBusy(false) }
   }
   return <div className="compute-panel">
+    <div className="compute-intro"><p>Give your hive a task. Review the split, then put your connected devices to work.</p><span className="compute-online"><i />{nodes.filter(n => !['offline', 'paused'].includes(n.status)).length} devices available</span></div>
     {error && <p className="form-error" role="alert">{error}</p>}
     <div className="compute-columns">
       <section className="work-editor panel">
-        <div className="panel-header"><h2>Send work</h2><select aria-label="Work mode" value={mode} onChange={e => edit(() => { setMode(e.target.value); if (e.target.value === 'animation') setSource('') })}><option value="compute">Compute</option><option value="animation">Animation</option><option value="onnx">ONNX</option></select></div>
-        <div className="compute-choices" aria-label="Source entry">{['type','file'].map(value => <button key={value} className={`button ${entry === value ? 'button-primary' : 'button-secondary'}`} onClick={() => setEntry(value)}>{value === 'type' ? 'Type code' : 'Upload file'}</button>)}</div>
-        {entry === 'file' || mode === 'onnx' ? <label className="file-drop">{filename}<input type="file" accept={mode === 'onnx' ? '.onnx' : '.py,.wgsl'} onChange={e => upload(e.target.files[0])} /></label> : <label>Language<select value={filename.endsWith('.wgsl') ? 'wgsl' : 'py'} onChange={e => edit(() => { setFilename(`program.${e.target.value}`); setSource(e.target.value === 'wgsl' ? SHADER : SAMPLE) })}><option value="py">Python</option><option value="wgsl">WGSL</option></select></label>}
-        {mode !== 'onnx' && <><label htmlFor="source-code">Code</label><textarea id="source-code" className="code-editor" spellCheck={false} value={source} onChange={e => edit(() => setSource(e.target.value))} placeholder={mode === 'animation' ? 'Paste a renderer, or leave empty for Mandelbrot' : 'Python or WGSL source'} /></>}
+        <div className="panel-header"><div><span className="section-kicker">01 / YOUR TASK</span><h2>Prepare your work</h2></div><select aria-label="Work mode" value={mode} onChange={e => edit(() => { setMode(e.target.value) })}><option value="compute">Compute</option><option value="animation">Animation</option><option value="onnx">ONNX</option></select></div>
+        <div className="compute-choices" aria-label="Source entry">{['type','file'].map(value => <button key={value} aria-pressed={entry === value} className={`button ${entry === value ? 'button-primary' : 'button-secondary'}`} onClick={() => setEntry(value)}>{value === 'type' ? 'Type code' : 'Upload file'}</button>)}</div>
+        {entry === 'file' || mode === 'onnx' ? <label className="file-drop"><span>Choose a file for your hive</span><small>{mode === 'onnx' ? 'ONNX model' : 'Python or WGSL'} · {filename}</small><input type="file" accept={mode === 'onnx' ? '.onnx' : '.py,.wgsl'} onChange={e => upload(e.target.files[0])} /></label> : <label>Language<select value={filename.endsWith('.wgsl') ? 'wgsl' : 'py'} onChange={e => edit(() => { setFilename(`program.${e.target.value}`); setSource(e.target.value === 'wgsl' ? SHADER : SAMPLE) })}><option value="py">Python</option><option value="wgsl">WGSL</option></select></label>}
+        {mode !== 'onnx' && <div className="source-field"><div className="source-caption"><label htmlFor="source-code">Source code</label><span>{filename}</span></div><textarea id="source-code" className="code-editor" spellCheck={false} value={source} onChange={e => edit(() => setSource(e.target.value))} placeholder={mode === 'animation' ? 'Paste a renderer, or leave empty for Mandelbrot' : 'Python or WGSL source'} /></div>}
         {mode === 'compute' && <label>Segmentation<select value={segmentation} onChange={e => edit(() => setSegmentation(e.target.value))}><option value="auto">Automatic</option><option value="manual">Use my markers</option></select></label>}
         {mode !== 'animation' ? <>
           <div className="compute-fields"><label className="inline-check"><input type="checkbox" checked={useInput} onChange={e => edit(() => setUseInput(e.target.checked))} />Input array</label><label>Type<select value={dtype} onChange={e => edit(() => setDtype(e.target.value))}><option>f32</option><option>u32</option><option>i32</option></select></label></div>
@@ -96,18 +100,29 @@ export default function ComputePanel({ network, nodes, onKillNode, onControl }) 
           <details><summary>Renderer values</summary><label>Settings (JSON)<textarea value={settings} onChange={e => edit(() => setSettings(e.target.value))} /></label><label>Per-frame values (JSON array)<textarea value={frameValues} onChange={e => edit(() => setFrameValues(e.target.value))} placeholder='[{"camera_position":[3,2,3]},{"camera_position":[-3,2,3]}]' /></label></details>
         </>}
         <div className="compute-actions"><button className="button button-secondary" disabled={busy} onClick={() => analyze()}>Analyze</button>{mode === 'compute' && !filename.endsWith('.wgsl') && <button className="button button-secondary" disabled={busy} onClick={() => analyze(true)}>Mark & analyze</button>}<button className="button button-primary" disabled={busy || report?.status !== 'ready'} onClick={submit}>{busy ? 'Working…' : 'Send'}</button></div>
+        {mode === 'animation' && <button className="text-button" onClick={() => edit(() => { setSource(''); setFilename('animation.py') })}>Use built-in Mandelbrot</button>}
         {source.includes('# hive:') && <p className="compute-hint">Edit gpu/cpu in the comments, then analyze again.</p>}
       </section>
       <div className="compute-review">
-        <section className="partition-panel panel"><h2>Segments</h2>
-          {!report ? <p className="compute-hint">Analyze to review the split across connected devices.</p> : <>
-            <span className="status-pill">{report.status}</span>
-            <ul className="segment-list">{report.segments?.map(s => <li key={s.id}><strong>{s.name}</strong><span>{s.target.toUpperCase()} · lines {s.line}–{s.end_line} · {s.chunk_count || 0} chunks</span>{s.findings.map((f,i) => <p className="form-error" key={i}>{f}</p>)}{s.wgsl && <details><summary>WGSL</summary><pre>{s.wgsl}</pre><button className="text-button" onClick={() => saveFile(new Blob([s.wgsl], { type: 'text/plain' }), `${s.name}.wgsl`)}>Download shader</button></details>}</li>)}</ul>
+        <section className="partition-panel panel"><div className="panel-header"><div><span className="section-kicker">02 / REVIEW THE SPLIT</span><h2>Segments</h2></div>{report && <span className="status-pill" data-state={report.status}>{report.status}</span>}</div>
+          {!report ? <div className="compute-empty"><HexIcon /><strong>A plan before the work</strong><p>Analyze your code to see its CPU and GPU segments and how work will be shared.</p></div> : <>
+            <ul className="segment-list">{report.segments?.map(s => <li key={s.id}><strong>{s.name}</strong><span>{s.target.toUpperCase()} · lines {s.line}–{s.end_line} · {s.chunk_count || 0} chunks</span>{s.allocations && Object.keys(s.allocations).length > 0 && <p className="compute-hint">Planned split: {Object.entries(s.allocations).map(([id,count]) => `${report.contributors?.find(n => n.worker_id === id)?.name || 'Contributor'} ${Math.round(count / Object.values(s.allocations).reduce((a,b) => a+b,0) * 100)}%`).join(' · ')}</p>}{s.findings.map((f,i) => <p className="form-error" key={i}>{f}</p>)}{s.wgsl && <details><summary>WGSL</summary><pre>{s.wgsl}</pre><button className="text-button" onClick={() => saveFile(new Blob([s.wgsl], { type: 'text/plain' }), `${s.name}.wgsl`)}>Download shader</button></details>}</li>)}</ul>
             {report.output_shape && <p>Output shape: {report.output_shape.join(' × ')}</p>}
             <details><summary>Analysis notes</summary>{report.findings?.map((f,i) => <p className="compute-hint" key={i}>{f}</p>)}</details>
           </>}
         </section>
-        <section className="contributors-panel panel"><h2>Nodes</h2><ul className="contribution-list">{nodes.map(n => <li key={n.id}><div><strong>{n.name}</strong><span>{n.status} · {Math.round(n.weight * 100)}% GPU share</span><small>{n.capabilities.adapter?.description || n.capabilities.adapter?.vendor || 'CPU'} · {n.completed} chunks</small>{n.work && <small>{n.work.kind} · {n.work.chunk_id} · {n.work.count} items</small>}</div>{n.can_control && <div className="node-task-actions">{n.work && <button className="text-button" onClick={() => onControl(n.id, 'cancel')}>Cancel task</button>}<button className="text-button danger-text" disabled={n.status === 'offline'} onClick={() => onKillNode(n.id)}>Kill node</button></div>}</li>)}</ul></section>
+        <section className="contributors-panel panel">
+          <div className="panel-header"><div><span className="section-kicker">YOUR HIVE</span><h2>Connected devices</h2></div><span className="device-count">{nodes.length}</span></div>
+          <p className="compute-hint">Work shares follow measured CPU and GPU performance.</p>
+          <ul className="contribution-list node-cards">{nodes.map(n => <li key={n.id}>
+            <div className="node-card-heading"><strong>{n.name}</strong><span className="status-pill" data-state={n.status}>{n.status}</span></div>
+            <div className="node-shares"><div><span>GPU share</span><strong>{Math.round(n.weight * 100)}%</strong><progress aria-label={`${n.name} GPU share`} max="1" value={n.weight} /></div><div><span>CPU share</span><strong>{Math.round((n.cpu_weight || 0) * 100)}%</strong><progress aria-label={`${n.name} CPU share`} max="1" value={n.cpu_weight || 0} /></div></div>
+            <p className="node-card-meta">{n.capabilities.adapter?.description || n.capabilities.adapter?.vendor || 'CPU'}<span>{n.completed} chunks completed</span></p>
+            {n.work && <p className="node-task-detail">{n.work.kind} · {n.work.count} items</p>}
+            <div className="node-card-footer"><details><summary>Device specs</summary><ul>{nodeSpecs(n.capabilities).map(spec => <li key={spec}>{spec}</li>)}</ul></details>{n.can_control && <div className="node-task-actions">{n.work && <button className="text-button" onClick={() => onControl(n.id, 'cancel')}>Cancel task</button>}<button className="text-button danger-text" disabled={n.status === 'offline'} onClick={() => onKillNode(n.id)}>Kill node</button></div>}</div>
+          </li>)}</ul>
+          {!nodes.length && <p className="compute-hint">Devices will appear here when they join your hive.</p>}
+        </section>
       </div>
     </div>
     {jobs.length > 0 && <label className="job-picker">Result<select value={jobId} onChange={e => setJobId(e.target.value)}>{jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.name} · {j.target?.toUpperCase()}</option>)}</select></label>}

@@ -59,7 +59,7 @@ def test_login_refresh_rotation_and_logout(identity):
     user = signed_in.json()['user']
     assert user == {'id': 'google-user-123', 'name': 'Alex Chen', 'email': 'alex@example.com'}
     cookie = signed_in.headers['set-cookie']
-    assert 'HttpOnly' in cookie and 'SameSite=lax' in cookie and 'Path=/auth' in cookie
+    assert 'HttpOnly' in cookie and 'SameSite=lax' in cookie and 'Path=/' in cookie
     assert client.get('/auth/me').json()['user'] == user
     old_session = client.cookies.get(auth.SESSION_COOKIE)
     assert client.post('/auth/google', json={'credential': token()}, headers=headers).status_code == 200

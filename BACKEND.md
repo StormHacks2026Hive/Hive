@@ -139,3 +139,42 @@ portable performance guarantees. See the table below for the most recent full ru
 The equal split with the throttled worker took 23.09s. GPU hash lanes
 share one device; this measures correctness and overhead, not physical GPU scaling.
 All executed integer/hash comparisons matched exactly; ONNX used allclose.
+
+## Authenticated network integration
+
+The UserAuth UI is merged into main. Networks, membership, enrolled nodes and run
+history persist in SQLite. Google ID tokens are verified server-side; sessions
+use HttpOnly cookies and CSRF tokens. `.env` is loaded by `backend/config.py` and
+is local-only. See `HiveFrontend/README.md` for setup and Google origin settings.
+
+`backend/programs.py` scans uploaded Python for every literal compute shader and
+supported independent numeric regions. Automatic or editable CPU/GPU markers
+select targets. The existing WGSL compiler remains the GPU execution path.
+`browser_cpu.py` lowers the CPU analyzer's numeric subset into an interpreter IR
+for browser Web Workers; numeric CPU results use float64. Ray remains available
+through the local Python API and is not required by browser contributors.
+
+The coordinator partitions by measured CPU/GPU throughput, excludes inactive
+nodes, and adds at most 8% to the most common GPU family. Network membership
+restricts scheduling, status, results and private assets. SQLite retains device
+capabilities/counters; pause, resume, stop and job cancellation act on real
+workers. Kill/retry invalidates attempts and reassigns unfinished work. Uploaded
+Mandelbulb animations generate validated per-frame uniforms with global pixel
+coordinates and independent local texture writes.
+
+Fast integration checks: `pytest tests/test_programs.py`. Real-browser check:
+`backend/.venv/bin/python -m demos.authenticated_browser_check`. The script starts
+an isolated server/database and checks authenticated create/join, a CPU-only
+contributor, GPU/CPU markers and results, image reference pixels, PNG downloads,
+and persistent controls. This is correctness validation, not a speed benchmark.
+
+Browser nodes also report available GPU vendor/architecture/model, fallback-adapter
+status, device buffer/texture limits, logical CPU cores, platform and approximate
+system memory. Expand **Device specs** in the node list to see them. Browsers may
+hide the model or omit/round cores and memory; this is not an inventory of exact
+CPU models or VRAM. Reports persist with the node's capabilities in SQLite.
+GPU limits filter incompatible chunks, including texture dimensions. Scores still
+use measured throughput: buffer capacity is not compute speed, and the CPU path
+uses one Web Worker per node, so reported core counts do not multiply its score.
+Older clients that omit these optional fields remain supported. Reload contributor
+pages after updating to refresh their reports.
